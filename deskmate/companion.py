@@ -75,7 +75,8 @@ WALL_BOUNCE = 0.45
 FLOOR_BOUNCE = 0.2
 BOUNCE_MIN_SPEED = 1300.0
 HOLD_STILL_FADE = 3.8  # per second: throw speed fades while you hold her still
-WALK_SPEED = 75.0  # at medium size
+WALK_SPEED = 75.0  # at medium size; hop-walk when the pack has no walk pictures
+STEP_SPEED = 110.0  # with real walk pictures (matches their stride at 4.5 fps)
 WALK_HOP_SECONDS, WALK_HOP_HEIGHT = 0.34, 0.022
 WANDER_DISTANCE = (120.0, 380.0)  # at medium size
 
@@ -558,7 +559,7 @@ class Companion(QWidget):
 
     def _walk_step(self, dt: float, now: float) -> None:
         target, _start = self._walk
-        speed = WALK_SPEED * self._H / SIZES["medium"]
+        speed = (STEP_SPEED if "walk" in self._frames else WALK_SPEED) * self._H / SIZES["medium"]
         remaining = target - self._fx
         if abs(remaining) <= speed * dt:
             self._fx = target
@@ -584,7 +585,7 @@ class Companion(QWidget):
         else:
             sy *= 1 + depth * breath
             sx *= 1 - depth * 0.4 * breath
-        if self._walk is not None:
+        if self._walk is not None and "walk" not in self._frames:  # no legs to walk with: hop along
             phase = ((now - self._walk[1]) / WALK_HOP_SECONDS) % 1.0
             dy -= self._H * WALK_HOP_HEIGHT * math.sin(math.pi * phase)
         t = self._progress("hop", now, HOP_SECONDS)

@@ -292,11 +292,11 @@ Set `GRAVITY = 900.0` in `companion.py` and throw her: she floats like she's on 
 
 ## 9 · 🏆 Your turn
 
-### 🟢 Give her real legs
-Right now she hop-walks. Draw a proper walk cycle.
+### 🟢 A waving animation
+Make her wave when you come back to your PC.
 <details><summary>💡 Hint</summary>
 
-No code needed! Save 4 pictures of her walking, facing right, as `characters/yuki/walk/walk_01.png` … `walk_04.png` (same canvas size as `idle`, feet at the bottom centre). The app already uses them while she moves and flips them when she goes left. Set the speed in `character.json` with `"animations": {"walk": {"fps": 8}}`, then run `--check`.
+Make 2–3 pictures of her waving and add them with `tools/add_frames.py characters\yuki wave wave1.png wave2.png --fps 5` (that's how her walk cycle was added). Then have the brain show `wave` instead of `surprised` in `_wake`, and read `tools/add_frames.py` to see how it keeps her head steady between frames.
 </details>
 
 ### 🟡 A new mood: "excited"

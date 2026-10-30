@@ -118,5 +118,10 @@
     "surprised": "matched legs & shoes (601 points), moved +0.0, +0.0 px; feet off by 1.4 px -> 1.4 px",
     "blush": "matched legs & shoes (371 points), moved -7.2, +0.0 px; feet off by 4.0 px -> 3.5 px",
     "talk": "kept as is; feet off by 5.4 px -> 5.4 px"
+  },
+  "animations": {
+    "walk": {
+      "fps": 4.5
+    }
   }
 }

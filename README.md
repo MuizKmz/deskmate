@@ -25,7 +25,7 @@ dozes off when you leave, pouts when you ignore her, and reminds you to drink wa
 |---|---|
 | 🪟 **Floats on your screen** | Real transparency (smooth edges, no box), always on top, and she doesn't show up in the taskbar. |
 | 🖱️ **Reacts to you** | Click to pat her, drag her anywhere (she swings while you carry her), rest the mouse on her and she gets shy. |
-| 🍃 **Feels alive** | Blinks, breathes, and now and then strolls along the taskbar on her own. |
+| 🍃 **Feels alive** | Blinks, breathes, and now and then walks along the taskbar on her own (real steps, not sliding). |
 | 🪂 **Has gravity** | Drop her in mid-air and she falls to the taskbar with a squash. Fling her and she flies, bounces off the screen edges and lands ("Ow ow ow..."). |
 | 😴 **Lives with your day** | Gets sleepy when you step away, falls asleep, and wakes up when you come back. Sleepy late at night too. |
 | 😤 **Has feelings** | Pouts if you work for ages without saying hi. One pat and she forgives you. |
@@ -139,6 +139,12 @@ characters/
 
 (Name the files `idle.png`, `happy.png`, … or pass `--map idle=a.png happy=b.png`.)
 
+**Adding a walk cycle** (or any animation): draw the frames facing right, on a plain background, any size. The tool cuts them out and fits them to her idle picture (same height, same floor, steady head):
+
+```powershell
+.venv\Scripts\python tools\add_frames.py characters\yuki walk walk1.png walk2.png walk3.png walk4.png --fps 4.5
+```
+
 ---
 
 ## 🩺 If something's off
@@ -172,6 +178,7 @@ deskmate/
 tools/prepare_character.py   picture clean-up → character pack
 tools/draw_pixel_character.py  draws Piko in code
 tools/make_blink.py          makes a blink picture from idle + sleep
+tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
 tests/                       50 tests (python -m unittest)
@@ -180,8 +187,8 @@ tests/                       50 tests (python -m unittest)
 ## 🛣️ Next phases
 
 - ✅ **Phase 1 — Companion:** floating window, moods, speech, tray, safe settings.
-- ✅ **Phase 2 — Alive:** blinking, gravity, flinging, wandering along the taskbar.
-- **Phase 2½ — Perch:** sit on the top edge of your windows (Windows API), real walk-cycle pictures.
+- ✅ **Phase 2 — Alive:** blinking, gravity, flinging, walking along the taskbar with a real walk cycle.
+- **Phase 2½ — Perch:** sit on the top edge of your windows (Windows API).
 - **Phase 3 — AI:** chat with her (Claude API or a local model with Ollama), she remembers your day.
 - **Phase 4 — Online:** a shared pet for your team on a small server.
 
