@@ -1,0 +1,15 @@
+# Python / tooling
+.venv/
+__pycache__/
+*.pyc
+*.log
+build/
+dist/
+*.spec
+
+# Raw source pictures dropped in the project root stay on your computer.
+# (The app only uses the cleaned copies in characters/ and the pictures in docs/.)
+/*.png
+/*.jpg
+/*.jpeg
+/*.webp

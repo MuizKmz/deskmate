@@ -1,0 +1,41 @@
+{
+  "name": "Piko",
+  "author": "DeskMate",
+  "version": "1.0",
+  "personality": "cheerful, a bit dramatic, music-loving",
+  "smooth": false,
+  "head": {
+    "x": 0.4844,
+    "y": 0.3182,
+    "top": 0.0227
+  },
+  "theme": {
+    "bubble": "#FFFFFF",
+    "accent": "#3FB6A8",
+    "text": "#2B1D2E"
+  },
+  "lines": {
+    "intro": [
+      "Hi, I'm Piko! Drag me anywhere, click to pat me, right‑click for options~"
+    ],
+    "pet": [
+      "Hehe~",
+      "*happy beep*",
+      "Pat pat!"
+    ],
+    "too_much": [
+      "Hey! My headphones!"
+    ],
+    "random": [
+      "Lo-fi beats and you. Nice.",
+      "Need a break? I'll guard the desktop.",
+      "*hums along*"
+    ],
+    "wake": [
+      "Wha—? Oh, you're back!"
+    ],
+    "ignored": [
+      "Hmph... 45 minutes and not a single pat?"
+    ]
+  }
+}

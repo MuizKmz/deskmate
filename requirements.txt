@@ -1,0 +1,2 @@
+# Everything DeskMate needs to run. (PySide6-Essentials is the smaller Qt package.)
+PySide6-Essentials>=6.6,<7

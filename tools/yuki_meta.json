@@ -1,0 +1,94 @@
+{
+  "name": "Yuki",
+  "author": "Muiz",
+  "version": "1.0",
+  "personality": "sleepy, pouty, caring",
+  "catchphrase": "Mmh... you're finally back?",
+  "fps": 6,
+  "theme": {
+    "bubble": "#FFFFFF",
+    "accent": "#C9A0DC",
+    "text": "#3B2F4A"
+  },
+  "lines": {
+    "intro": [
+      "Hi, I'm Yuki~ Drag me anywhere, click to pat my head, and right‑click if you need anything."
+    ],
+    "greet_morning": [
+      "Mmh... good morning. Did you sleep well?",
+      "Morning~ Let's take it slow today, okay?"
+    ],
+    "greet_afternoon": [
+      "Oh, you're here! Good afternoon~",
+      "Afternoon already? Time flies..."
+    ],
+    "greet_evening": [
+      "Good evening~ Long day?",
+      "Evening! I kept your desktop warm."
+    ],
+    "greet_night": [
+      "You're up late again...",
+      "Mmh... it's late. Just a little longer, okay?"
+    ],
+    "pet": [
+      "Ehehe~",
+      "Mm... that's nice.",
+      "Hehe, that tickles!",
+      "More pats, please~"
+    ],
+    "too_much": [
+      "Hey! My hair's getting messy!",
+      "Hmph! That's too much~"
+    ],
+    "drag": [
+      "W-whoa!",
+      "Where are we going?",
+      "Not so fast~!"
+    ],
+    "drop": [
+      "Here? Okay~",
+      "This spot is cosy.",
+      "Mm, nice view from here."
+    ],
+    "sleepy": [
+      "*yawn*... mmh...",
+      "Getting sleepy..."
+    ],
+    "goodnight": [
+      "Good night... wake me if you need me.",
+      "Five more minutes... zzz"
+    ],
+    "wake": [
+      "Mmh...? Oh! You're finally back?",
+      "Wha—! I wasn't sleeping! ...okay, maybe a little."
+    ],
+    "ignored": [
+      "Hmph... you forgot about me again?",
+      "I'm still here, you know..."
+    ],
+    "forgive": [
+      "Hmph... fine. I forgive you.",
+      "...okay, you're forgiven. This time."
+    ],
+    "late": [
+      "It's really late... please don't stay up too long, okay?",
+      "The moon is out already... remember to rest."
+    ],
+    "water": [
+      "Have you had water lately? Go drink some~",
+      "Jangan lupa minum air, okay?"
+    ],
+    "break": [
+      "You've been working so long... stretch a little?",
+      "Rest your eyes for a bit? Look at something far away~"
+    ],
+    "random": [
+      "What are you working on?",
+      "I'm right here if you need me~",
+      "Mmh... this cardigan is so warm.",
+      "Dah makan? Don't skip meals, okay?",
+      "Don't forget to breathe~",
+      "You're doing great, you know."
+    ]
+  }
+}
