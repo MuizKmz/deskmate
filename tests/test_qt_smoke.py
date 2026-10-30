@@ -316,7 +316,16 @@ class QtSmokeTests(unittest.TestCase):
                 controller._set_chatty(False)
                 controller._set_wander(False)
                 controller._set_gravity(False)
+                controller.act_walk.trigger()  # no floor without gravity: she says so instead
+                self.assertFalse(controller.companion.walking)
+                self.assertIn("Gravity", controller.bubble.text)
                 controller._set_gravity(True)
+                mate = controller.companion
+                mate._stop_moving()
+                mate.move(mate.available_rect().center().x() - mate.width() // 2, mate.floor_y())
+                controller.act_walk.trigger()  # "Take a walk" from the menu
+                self.assertTrue(mate.walking)
+                mate._stop_moving()
                 controller.toggle_visible()
                 self.assertFalse(controller.companion.isVisible())
                 controller.toggle_visible()

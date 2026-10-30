@@ -235,6 +235,15 @@ class WanderTests(unittest.TestCase):
         brain, _ = make(chatty=False, reminders=False)
         self.assertIn("wander", self.tick_through(brain, B.WANDER_MAX + 20))
 
+    def test_walk_from_the_menu_wakes_her_and_she_says_something(self):
+        brain, _ = make()
+        brain.set_manual_sleep(0, True)
+        texts(brain)
+        brain.on_walk_request(10)
+        self.assertFalse(brain.asleep)
+        self.assertEqual(texts(brain), ["<wander>"])
+        self.assertEqual(brain.expression(10.2), "happy")
+
     def test_no_strolling_when_switched_off_or_asleep(self):
         brain, _ = make(chatty=False, reminders=False, wander=False)
         self.assertNotIn("wander", self.tick_through(brain, B.WANDER_MAX * 3))

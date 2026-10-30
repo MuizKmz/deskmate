@@ -227,6 +227,17 @@ class Brain:
         if not self._say("random", now):
             self._react("happy", now, 2.0)
 
+    def on_walk_request(self, now: float) -> None:
+        """'Take a walk' from the menu (the window does the walking)."""
+        if self.base in ("sleep", "sleepy"):
+            self._wake(now, quiet=True)
+            self.base = "idle"
+        if self._touch(now):
+            return
+        if not self._speaking(now) and self._say("wander", now, "happy"):
+            return
+        self._react("happy", now, 1.5)
+
     def on_hover(self, now: float, inside: bool) -> None:
         if inside:
             self._hover_since = now

@@ -9,7 +9,7 @@ dozes off when you leave, pouts when you ignore her, and reminds you to drink wa
 ![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/PySide6-Qt_6-41CD52?style=for-the-badge&logo=qt&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10_/_11-0078D4?style=for-the-badge&logo=windows&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-50_passing-2ea44f?style=for-the-badge)
+![Tests](https://img.shields.io/badge/tests-51_passing-2ea44f?style=for-the-badge)
 
 <img src="docs/demo.gif" alt="Yuki on the desktop: blinking, patted, strolling along the taskbar, flung across the screen, talking, then falling asleep" width="640">
 
@@ -52,7 +52,7 @@ After that it starts instantly. To start her with Windows, right-click her → *
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 50 self-tests
+run_deskmate.bat --test        # run the 51 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -73,11 +73,12 @@ python -m venv .venv
 | **Let go** in mid-air | She falls to the taskbar and lands with a squash |
 | **Fling** her | She flies with your swipe, bounces off the screen edge, and complains a little if she lands hard |
 | Leave her be | She blinks, breathes, and wanders to a new spot every minute or two |
+| Right-click → **Take a walk** | She walks along the taskbar right now |
 | **Rest the mouse** on her | Blushes |
 | **Right-click** her (or the tray icon) | The menu ⬇️ |
 | Click the **tray icon** | Hide / show her |
 
-**Menu:** Talk to me · Go to sleep / Wake up · Character · Size (small / medium / large) · Always on top · Gravity · Wander around · Chit-chat now and then · Care reminders · Start with Windows · Move back to the corner · Open settings & logs folder · Quit
+**Menu:** Talk to me · Take a walk · Go to sleep / Wake up · Character · Size (small / medium / large) · Always on top · Gravity · Wander around · Chit-chat now and then · Care reminders · Start with Windows · Move back to the corner · Open settings & logs folder · Quit
 
 > Want her to stay exactly where you put her (say, mid-screen)? Untick **Gravity**.
 
@@ -181,7 +182,7 @@ tools/make_blink.py          makes a blink picture from idle + sleep
 tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
-tests/                       50 tests (python -m unittest)
+tests/                       51 tests (python -m unittest)
 ```
 
 ## 🛣️ Next phases

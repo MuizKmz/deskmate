@@ -200,6 +200,7 @@ class Controller:
         self.bubble = SpeechBubble(pack.theme)
         self.bubble.set_on_top(settings["always_on_top"])
         self._tooltip = ""
+        self._walk_after_landing = False
 
         self.companion.clicked.connect(self._on_click)
         self.companion.dragStarted.connect(lambda: self._event(self.brain.on_drag_start))
@@ -285,6 +286,26 @@ class Controller:
     def _on_landed(self, impact: float) -> None:
         self._event(lambda now: self.brain.on_landed(now, impact))
         self._remember_position()
+        if self._walk_after_landing:
+            self._walk_after_landing = False
+            from PySide6.QtCore import QTimer
+
+            QTimer.singleShot(600, self.take_walk)
+
+    def take_walk(self) -> None:
+        """Menu: walk along the taskbar right now."""
+        if not self.companion.isVisible():
+            self.show_companion()
+        if not self.companion.gravity:
+            self.bubble.say("Turn on Gravity first~ I need a floor to walk on!", 3.5,
+                            self.companion.head_rect_global(), self.companion.available_rect())
+            return
+        if self.companion.falling or not self.companion.on_floor():
+            self._walk_after_landing = True  # land first, then go
+            self.companion.settle()
+            return
+        if self.companion.start_wander():
+            self._event(self.brain.on_walk_request)
 
     def _on_moved(self) -> None:
         if self.bubble.isVisible():
@@ -334,6 +355,7 @@ class Controller:
 
         self.act_toggle = action(f"Hide {name}", self.toggle_visible)
         self.act_talk = action("Talk to me", lambda: self._event(self.brain.on_talk_request))
+        self.act_walk = action("Take a walk", self.take_walk)
         self.act_sleep = action("Go to sleep", self._toggle_sleep)
         menu.addSeparator()
 
