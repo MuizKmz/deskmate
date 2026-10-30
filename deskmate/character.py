@@ -47,6 +47,8 @@ DEFAULT_LINES: dict[str, list[str]] = {
     "too_much": ["Hey! That's too much~"],
     "drag": ["Whoa—!", "Where are we going?"],
     "drop": ["Here is nice.", "Okay, I'll stay here."],
+    "fall": ["Oof!", "Ouch... I'm okay!"],
+    "wander": ["Let's go over here~"],
     "sleepy": ["*yawn*..."],
     "goodnight": ["Good night..."],
     "wake": ["Mmh...? Oh! You're back!"],

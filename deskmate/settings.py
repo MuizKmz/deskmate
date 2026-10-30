@@ -48,6 +48,8 @@ SCHEMA: dict[str, tuple[Any, Callable[[Any], bool]]] = {
     "always_on_top": (True, _is_bool),
     "chatty": (True, _is_bool),
     "reminders": (True, _is_bool),
+    "gravity": (True, _is_bool),
+    "wander": (True, _is_bool),
 }
 
 

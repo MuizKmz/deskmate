@@ -89,6 +89,16 @@
       "Dah makan? Don't skip meals, okay?",
       "Don't forget to breathe~",
       "You're doing great, you know."
+    ],
+    "fall": [
+      "Ow ow ow...",
+      "I-I'm okay!",
+      "Hmph! Be gentle~"
+    ],
+    "wander": [
+      "Let's sit over here~",
+      "Just stretching my legs~",
+      "Mm, a change of view."
     ]
   }
 }

@@ -150,6 +150,98 @@ class QtSmokeTests(unittest.TestCase):
         self.assertTrue(companion.isVisible())
         companion.close()
 
+    # ------------------------------------------------------------ Phase 2
+    def physics_companion(self, with_blink=False):
+        """A companion driven by a pretend clock, so physics can be stepped exactly."""
+        import random
+
+        from deskmate.character import load_pack
+        from deskmate.companion import Companion, load_frames
+
+        class Clock:
+            t = 1000.0
+
+            def __call__(self):
+                return self.t
+
+        clock = Clock()
+        pack = load_pack(self.root)
+        frames = load_frames(pack)
+        if with_blink:
+            frames["blink"] = [frames["happy"][0]]  # any different picture will do for the test
+        companion = Companion(pack, frames, size="medium", clock=clock, rng=random.Random(7))
+        companion.place(None)
+        companion.show()
+        companion._timer.stop()  # we step frames ourselves
+        return companion, clock
+
+    def step(self, companion, clock, seconds, until=None):
+        frames = int(seconds * 30)
+        for _ in range(frames):
+            clock.t += 1 / 30
+            companion._on_frame()
+            if until is not None and until():
+                return True
+        return False
+
+    def test_gravity_she_falls_to_the_floor_and_lands(self):
+        companion, clock = self.physics_companion()
+        landings = []
+        companion.landed.connect(landings.append)
+        floor = companion.floor_y()
+        companion.move(companion.pos().x(), floor - 300)  # put her up in the air
+        self.assertFalse(companion.on_floor())
+        companion.settle()
+        self.assertTrue(companion.falling)
+        self.assertTrue(self.step(companion, clock, 3.0, until=lambda: not companion.falling))
+        self.assertTrue(companion.on_floor())
+        self.assertEqual(len(landings), 1)
+        self.assertGreater(landings[0], 500)
+        companion.close()
+
+    def test_flinging_her_bounces_off_walls_and_stays_on_screen(self):
+        companion, clock = self.physics_companion()
+        body = companion._sprite_rect_local().center()
+        start = body
+        mouse(companion, QEvent.Type.MouseButtonPress, start)
+        for i in range(1, 6):  # a fast swipe to the right and up
+            clock.t += 0.016
+            mouse(companion, QEvent.Type.MouseMove, start + QPoint(45 * i, -25 * i), button=Qt.MouseButton.NoButton)
+        mouse(companion, QEvent.Type.MouseButtonRelease, start + QPoint(225, -125), buttons=Qt.MouseButton.NoButton)
+        self.assertTrue(companion.falling)
+        self.assertGreater(companion._fall_vx, 1000)
+        self.assertTrue(self.step(companion, clock, 6.0, until=lambda: not companion.falling))
+        min_x, max_x, _, floor = companion._limits(companion._ground_rect())
+        self.assertTrue(min_x <= companion.pos().x() <= max_x)
+        self.assertEqual(companion.pos().y(), int(floor))
+        companion.close()
+
+    def test_wander_walks_to_a_spot_and_stays_on_the_floor(self):
+        companion, clock = self.physics_companion()
+        start_x = companion.pos().x()
+        self.assertTrue(companion.start_wander(target_x=start_x - 150))
+        self.assertTrue(self.step(companion, clock, 10.0, until=lambda: not companion.walking))
+        self.assertLessEqual(abs(companion.pos().x() - (start_x - 150)), 1)
+        self.assertTrue(companion.on_floor())
+        companion.set_gravity(False)
+        self.assertFalse(companion.start_wander())  # no strolling without gravity
+        companion.close()
+
+    def test_blinking(self):
+        companion, clock = self.physics_companion(with_blink=True)
+        companion.set_expression("idle")
+        blinking = 0
+        for _ in range(30 * 15):
+            clock.t += 1 / 30
+            companion._on_frame()
+            blinking += companion.showing_blink()
+        self.assertGreater(blinking, 0)  # she blinked...
+        self.assertLess(blinking, 30)  # ...but only briefly
+        companion.set_expression("happy")
+        self.step(companion, clock, 8.0)
+        self.assertFalse(companion.showing_blink())  # no blinking with other faces
+        companion.close()
+
     def test_built_in_pixel_character(self):
         from deskmate.character import load_pack
         from deskmate.companion import Companion, load_frames
@@ -222,6 +314,9 @@ class QtSmokeTests(unittest.TestCase):
                 controller._tick()
                 controller._set_size("large")
                 controller._set_chatty(False)
+                controller._set_wander(False)
+                controller._set_gravity(False)
+                controller._set_gravity(True)
                 controller.toggle_visible()
                 self.assertFalse(controller.companion.isVisible())
                 controller.toggle_visible()
@@ -244,6 +339,8 @@ class QtSmokeTests(unittest.TestCase):
             saved = Settings(Path(home) / "settings.json")
             self.assertEqual(saved["size"], "large")
             self.assertFalse(saved["chatty"])
+            self.assertFalse(saved["wander"])
+            self.assertTrue(saved["gravity"])
             self.assertIsNotNone(saved["position"])
             controller.companion.close()
 

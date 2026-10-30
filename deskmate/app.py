@@ -148,7 +148,8 @@ def main(argv: list[str] | None = None) -> int:
             f"DeskMate will still start. Details are in:\n{log_path}",
         )
 
-    brain = Brain(pack.lines, now=time.monotonic(), chatty=settings["chatty"], reminders=settings["reminders"])
+    brain = Brain(pack.lines, now=time.monotonic(), chatty=settings["chatty"], reminders=settings["reminders"],
+                  wander=settings["wander"])
 
     def cursor_pos() -> tuple[int, int]:
         from PySide6.QtGui import QCursor
@@ -194,7 +195,8 @@ class Controller:
         self.pack = pack
         self.brain = brain
         self.idle = idle
-        self.companion = Companion(pack, frames, size=settings["size"], on_top=settings["always_on_top"])
+        self.companion = Companion(pack, frames, size=settings["size"], on_top=settings["always_on_top"],
+                                   gravity=settings["gravity"])
         self.bubble = SpeechBubble(pack.theme)
         self.bubble.set_on_top(settings["always_on_top"])
         self._tooltip = ""
@@ -202,6 +204,7 @@ class Controller:
         self.companion.clicked.connect(self._on_click)
         self.companion.dragStarted.connect(lambda: self._event(self.brain.on_drag_start))
         self.companion.dragEnded.connect(self._on_drag_end)
+        self.companion.landed.connect(self._on_landed)
         self.companion.hoverChanged.connect(lambda inside: self.brain.on_hover(time.monotonic(), inside))
         self.companion.menuRequested.connect(self._show_menu)
         self.companion.moved.connect(self._on_moved)
@@ -233,6 +236,7 @@ class Controller:
         self.companion.place(self.settings["position"])
         if self.settings["visible"] or self.tray is None:
             self.companion.show()
+            self.companion.settle()  # floating from an earlier session? she drops to the taskbar
         now = time.monotonic()
         if first_run:
             self.brain.on_first_run(now)  # one-time hello with instructions
@@ -277,6 +281,9 @@ class Controller:
 
     def _on_drag_end(self) -> None:
         self._event(self.brain.on_drag_end)
+
+    def _on_landed(self, impact: float) -> None:
+        self._event(lambda now: self.brain.on_landed(now, impact))
         self._remember_position()
 
     def _on_moved(self) -> None:
@@ -345,6 +352,8 @@ class Controller:
 
         self.act_top = action("Always on top", self._set_on_top, True, self.settings["always_on_top"])
         self.act_chatty = action("Chit-chat now and then", self._set_chatty, True, self.settings["chatty"])
+        self.act_gravity = action("Gravity (falls to the taskbar)", self._set_gravity, True, self.settings["gravity"])
+        self.act_wander = action("Wander around", self._set_wander, True, self.settings["wander"])
         self.act_care = action("Care reminders (water && breaks)", self._set_reminders, True,
                                self.settings["reminders"])
         self.act_autostart = None
@@ -445,6 +454,14 @@ class Controller:
         self.brain.chatty = bool(on)
         self._set("chatty", bool(on))
 
+    def _set_gravity(self, on: bool) -> None:
+        self.companion.set_gravity(bool(on))
+        self._set("gravity", bool(on))
+
+    def _set_wander(self, on: bool) -> None:
+        self.brain.wander = bool(on)
+        self._set("wander", bool(on))
+
     def _set_reminders(self, on: bool) -> None:
         self.brain.reminders = bool(on)
         self._set("reminders", bool(on))
@@ -476,6 +493,7 @@ class Controller:
         if not self.companion.isVisible():
             self.companion.move(self.companion.clamped_pos(self.companion.pos()))
             self.companion.show()
+            self.companion.settle()
             self._set("visible", True)
         self.companion.raise_()
         self._event(self.brain.on_talk_request if not self.brain.asleep else self.brain.on_pet)

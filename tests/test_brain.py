@@ -8,6 +8,7 @@ from deskmate.brain import Brain
 LINES = {key: [f"<{key}>"] for key in (
     "intro", "greet_morning", "greet_afternoon", "greet_evening", "greet_night", "pet", "too_much",
     "drag", "drop", "sleepy", "goodnight", "wake", "ignored", "forgive", "late", "water", "break", "random",
+    "fall", "wander",
 )}
 
 
@@ -197,13 +198,22 @@ class ChatterTests(unittest.TestCase):
 
 
 class DragAndHoverTests(unittest.TestCase):
-    def test_surprised_while_dragged_then_lands(self):
+    def test_surprised_while_dragged_then_calm_after_a_soft_landing(self):
         brain, _ = make()
         brain.on_drag_start(5)
         self.assertEqual(brain.expression(9), "surprised")
         brain.on_drag_end(10)
-        self.assertIn("land", brain.drain_animations())
-        self.assertNotEqual(brain.expression(10.1), "surprised")
+        brain.on_landed(10.2, impact=0.0)
+        self.assertNotEqual(brain.expression(10.3), "surprised")
+        self.assertNotIn("<fall>", texts(brain))
+
+    def test_a_big_fall_hurts_a_little(self):
+        brain, _ = make()
+        brain.on_drag_start(5)
+        brain.on_drag_end(6)
+        brain.on_landed(7, impact=2400.0)
+        self.assertIn("<fall>", texts(brain))  # (a "drag" line may come first)
+        self.assertEqual(brain.expression(7.2), "surprised")
 
     def test_mouse_resting_on_her_makes_her_blush(self):
         brain, _ = make()
@@ -212,6 +222,25 @@ class DragAndHoverTests(unittest.TestCase):
         self.assertEqual(brain.expression(0.5), "idle")
         brain.tick(2.0, user_idle=0)
         self.assertEqual(brain.expression(2.0), "blush")
+
+
+class WanderTests(unittest.TestCase):
+    def tick_through(self, brain, seconds, step=10):
+        for t in range(0, seconds, step):
+            brain.last_interaction = t  # keep her from pouting
+            brain.tick(t, user_idle=1)
+        return brain.drain_animations()
+
+    def test_she_strolls_now_and_then(self):
+        brain, _ = make(chatty=False, reminders=False)
+        self.assertIn("wander", self.tick_through(brain, B.WANDER_MAX + 20))
+
+    def test_no_strolling_when_switched_off_or_asleep(self):
+        brain, _ = make(chatty=False, reminders=False, wander=False)
+        self.assertNotIn("wander", self.tick_through(brain, B.WANDER_MAX * 3))
+        brain, _ = make(chatty=False, reminders=False)
+        brain.set_manual_sleep(0, True)
+        self.assertNotIn("wander", self.tick_through(brain, B.WANDER_MAX * 3))
 
 
 class DurationTests(unittest.TestCase):

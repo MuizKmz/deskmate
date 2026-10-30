@@ -34,6 +34,9 @@ WATER_EVERY = 60 * 60  # care reminder: drink water
 BREAK_AFTER = 50 * 60  # care reminder: non-stop work streak
 RETURN_GRACE = 15 * 60  # after you come back, wait before the next water reminder
 CHATTER_MIN, CHATTER_MAX = 6 * 60, 14 * 60  # random chit-chat interval
+WANDER_MIN, WANDER_MAX = 45, 140  # she strolls along the taskbar now and then
+WANDER_LINE_CHANCE = 0.25
+BIG_FALL = 1500.0  # landing speed (px/s) that earns an "ouch"
 LATE_HOURS = range(0, 5)  # midnight to 5 am counts as "late"
 
 LABELS = {
@@ -69,12 +72,14 @@ class Brain:
         wallclock: Callable[[], datetime] = datetime.now,
         chatty: bool = True,
         reminders: bool = True,
+        wander: bool = True,
     ):
         self.lines = lines
         self.rng = rng or random.Random()
         self.wallclock = wallclock
         self.chatty = chatty
         self.reminders = reminders
+        self.wander = wander
 
         self.base = "idle"
         self.manual_sleep = False
@@ -89,6 +94,7 @@ class Brain:
         self._active_since = now
         self._last_water = now
         self._next_chatter = now + self.rng.uniform(CHATTER_MIN, CHATTER_MAX)
+        self._next_wander = now + self.rng.uniform(WANDER_MIN, WANDER_MAX)
         self._late_day = None
         self._speech_until = -1e9
         self._speech: list[Speech] = []
@@ -239,7 +245,14 @@ class Brain:
     def on_drag_end(self, now: float) -> None:
         self._dragging = False
         self.last_interaction = now
-        self._animations.append("land")
+
+    def on_landed(self, now: float, impact: float) -> None:
+        """She touched down: ``impact`` is her landing speed (0 when simply put down)."""
+        self.last_interaction = now
+        if impact >= BIG_FALL:
+            if not self._say("fall", now, "surprised"):
+                self._react("surprised", now, 1.2)
+            return
         if self.rng.random() < 0.5 and self._say("drop", now):
             return
         self._react("happy", now, 1.5)
@@ -329,3 +342,11 @@ class Brain:
             self._next_chatter = now + self.rng.uniform(CHATTER_MIN, CHATTER_MAX)
             if not self._speaking(now) and not self._dragging:
                 self._say("random", now)
+
+        # A little stroll along the taskbar (the window decides if it's possible right now).
+        if self.wander and self.base == "idle" and user_active and now >= self._next_wander:
+            self._next_wander = now + self.rng.uniform(WANDER_MIN, WANDER_MAX)
+            if not self._speaking(now) and not self._dragging:
+                self._animations.append("wander")
+                if self.rng.random() < WANDER_LINE_CHANCE:
+                    self._say("wander", now, "happy")

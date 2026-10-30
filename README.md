@@ -3,15 +3,15 @@
 # 🌙 DeskMate
 
 **A little companion who lives on your desktop.**<br>
-She floats above your windows, reacts when you pat her, dozes off when you leave,<br>
-pouts when you ignore her, and reminds you to drink water.
+She strolls along your taskbar, reacts when you pat her, tumbles if you drop her,<br>
+dozes off when you leave, pouts when you ignore her, and reminds you to drink water.
 
 ![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/PySide6-Qt_6-41CD52?style=for-the-badge&logo=qt&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10_/_11-0078D4?style=for-the-badge&logo=windows&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-43_passing-2ea44f?style=for-the-badge)
+![Tests](https://img.shields.io/badge/tests-50_passing-2ea44f?style=for-the-badge)
 
-<img src="docs/demo.gif" alt="Yuki on the desktop: patted, shy, carried around, talking, then falling asleep" width="640">
+<img src="docs/demo.gif" alt="Yuki on the desktop: blinking, patted, strolling along the taskbar, flung across the screen, talking, then falling asleep" width="640">
 
 [**Start**](#-start-in-one-double-click) · [**Play with her**](#-play-with-her) · [**Moods**](#-her-moods) · [**Characters**](#-characters) · [**📖 How it works**](TUTORIAL.md)
 
@@ -25,6 +25,8 @@ pouts when you ignore her, and reminds you to drink water.
 |---|---|
 | 🪟 **Floats on your screen** | Real transparency (smooth edges, no box), always on top, and she doesn't show up in the taskbar. |
 | 🖱️ **Reacts to you** | Click to pat her, drag her anywhere (she swings while you carry her), rest the mouse on her and she gets shy. |
+| 🍃 **Feels alive** | Blinks, breathes, and now and then strolls along the taskbar on her own. |
+| 🪂 **Has gravity** | Drop her in mid-air and she falls to the taskbar with a squash. Fling her and she flies, bounces off the screen edges and lands ("Ow ow ow..."). |
 | 😴 **Lives with your day** | Gets sleepy when you step away, falls asleep, and wakes up when you come back. Sleepy late at night too. |
 | 😤 **Has feelings** | Pouts if you work for ages without saying hi. One pat and she forgives you. |
 | 💧 **Takes care of you** | Gentle reminders to drink water and take a stretch break (can be switched off). |
@@ -50,7 +52,7 @@ After that it starts instantly. To start her with Windows, right-click her → *
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 43 self-tests
+run_deskmate.bat --test        # run the 50 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -67,12 +69,17 @@ python -m venv .venv
 |---|---|
 | **Click** her | Happy hop + a cute line |
 | **Click a lot**, fast | "Hey! My hair's getting messy!" 😤 |
-| **Drag** her | Surprised face, swings like a pendulum, little squash when you drop her |
+| **Drag** her | Surprised face, swings like a pendulum |
+| **Let go** in mid-air | She falls to the taskbar and lands with a squash |
+| **Fling** her | She flies with your swipe, bounces off the screen edge, and complains a little if she lands hard |
+| Leave her be | She blinks, breathes, and wanders to a new spot every minute or two |
 | **Rest the mouse** on her | Blushes |
 | **Right-click** her (or the tray icon) | The menu ⬇️ |
 | Click the **tray icon** | Hide / show her |
 
-**Menu:** Talk to me · Go to sleep / Wake up · Character · Size (small / medium / large) · Always on top · Chit-chat now and then · Care reminders · Start with Windows · Move back to the corner · Open settings & logs folder · Quit
+**Menu:** Talk to me · Go to sleep / Wake up · Character · Size (small / medium / large) · Always on top · Gravity · Wander around · Chit-chat now and then · Care reminders · Start with Windows · Move back to the corner · Open settings & logs folder · Quit
+
+> Want her to stay exactly where you put her (say, mid-screen)? Untick **Gravity**.
 
 ---
 
@@ -140,6 +147,7 @@ characters/
 |---|---|
 | Nothing appears | Run `run_deskmate.bat --console` and read the message. |
 | She's lost somewhere | Right-click the tray icon → **Move back to the corner**. |
+| She won't stay where I put her | Untick **Gravity** (and **Wander around** if she walks off). |
 | Weird behaviour | Right-click → **Open settings & logs folder** → `deskmate.log`. |
 | Start fresh | Quit her, delete `settings.json` in that folder. |
 
@@ -163,14 +171,17 @@ deskmate/
 └── logsetup.py         log file, even with no console
 tools/prepare_character.py   picture clean-up → character pack
 tools/draw_pixel_character.py  draws Piko in code
+tools/make_blink.py          makes a blink picture from idle + sleep
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
-tests/                       43 tests (python -m unittest)
+tests/                       50 tests (python -m unittest)
 ```
 
 ## 🛣️ Next phases
 
-- **Phase 2 — Alive:** blinking, walking along the taskbar, falling when dropped, sitting on window edges.
+- ✅ **Phase 1 — Companion:** floating window, moods, speech, tray, safe settings.
+- ✅ **Phase 2 — Alive:** blinking, gravity, flinging, wandering along the taskbar.
+- **Phase 2½ — Perch:** sit on the top edge of your windows (Windows API), real walk-cycle pictures.
 - **Phase 3 — AI:** chat with her (Claude API or a local model with Ollama), she remembers your day.
 - **Phase 4 — Online:** a shared pet for your team on a small server.
 

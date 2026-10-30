@@ -164,6 +164,14 @@ def _talk(d):
     cheeks(d)
 
 
+@face("blink")
+def _blink(d):
+    for ex in (10, 19):  # same as idle, eyes shut
+        d.line((ex, 17, ex + 2, 17), fill=C["out"])
+    px(d, [(15, 21), (16, 21)], "mouth")
+    cheeks(d)
+
+
 LINES = {
     "intro": ["Hi, I'm Piko! Drag me anywhere, click to pat me, right\u2011click for options~"],
     "pet": ["Hehe~", "*happy beep*", "Pat pat!"],
@@ -171,6 +179,8 @@ LINES = {
     "random": ["Lo-fi beats and you. Nice.", "Need a break? I'll guard the desktop.", "*hums along*"],
     "wake": ["Wha—? Oh, you're back!"],
     "ignored": ["Hmph... 45 minutes and not a single pat?"],
+    "fall": ["Waaah— *thud*", "8-bit landing!"],
+    "wander": ["*boop boop* walking~"],
 }
 
 

@@ -5,7 +5,7 @@
 ### A guided tour: see-through windows, animation, a testable "brain", and the habits that make an app robust
 
 ![Level](https://img.shields.io/badge/level-intermediate-blueviolet?style=flat-square)
-![Time](https://img.shields.io/badge/time-~1_hour-orange?style=flat-square)
+![Time](https://img.shields.io/badge/time-~90_min-orange?style=flat-square)
 
 [← Back to README](README.md)
 
@@ -19,14 +19,15 @@
 
 | # | Chapter | File | You'll learn |
 |:-:|---|---|---|
-| 1 | [The big picture](#1--the-big-picture) | all | How the pieces talk to each other |
-| 2 | [A window you can see through](#2--a-window-you-can-see-through) | `companion.py` | Frameless, transparent, always-on-top windows |
-| 3 | [Drawing her](#3--drawing-her) | `companion.py` | Image caching, HiDPI, crossfades, animation maths |
-| 4 | [The brain](#4--the-brain) | `brain.py` | State machines you can unit-test with a fake clock |
-| 5 | [Talking](#5--talking) | `bubble.py` | A typing effect that doesn't make words jump |
-| 6 | [Never break, never get lost](#6--never-break-never-get-lost) | `settings.py`, `app.py` | Atomic saves, screen clamping, logging, one instance |
-| 7 | [Character packs](#7--character-packs) | `character.py`, `tools/` | Validating input, and how the image clean-up works |
-| 8 | [Your turn](#8--your-turn) | | Challenges with hints |
+| 1 | [The big picture](#1---the-big-picture) | all | How the pieces talk to each other |
+| 2 | [A window you can see through](#2---a-window-you-can-see-through) | `companion.py` | Frameless, transparent, always-on-top windows |
+| 3 | [Drawing her](#3---drawing-her) | `companion.py` | Image caching, HiDPI, crossfades, animation maths |
+| 4 | [The brain](#4---the-brain) | `brain.py` | State machines you can unit-test with a fake clock |
+| 5 | [Talking](#5---talking) | `bubble.py` | A typing effect that doesn't make words jump |
+| 6 | [Never break, never get lost](#6---never-break-never-get-lost) | `settings.py`, `app.py` | Atomic saves, screen clamping, logging, one instance |
+| 7 | [Character packs](#7---character-packs) | `character.py`, `tools/` | Validating input, and how the image clean-up works |
+| 8 | [Bringing her to life](#8---bringing-her-to-life) | `companion.py`, `brain.py` | Blinking, gravity, throwing, wandering, frame-rate-proof physics |
+| 9 | [Your turn](#9---your-turn) | | Challenges with hints |
 
 ---
 
@@ -40,7 +41,7 @@ flowchart LR
     T[[Timer every 250 ms]] --> A
     I[Idle time<br/>sysidle.py] --> A
     A -- "which face? anything to say?" --> B
-    A -- expression, hop/land/shake --> C
+    A -- expression, hop/land/shake/wander --> C
     A -- text --> S[Speech bubble]
     A <--> F[(settings.json)]
 ```
@@ -130,7 +131,7 @@ face = surprised        while you're dragging her
      = base mood        otherwise          (idle | sleepy | sleep | pouty)
 ```
 
-`tick(now, user_idle)` runs four times a second and applies the rules in order: sleep/wake → late night → pout → blush → reminders → chit-chat.
+`tick(now, user_idle)` runs four times a second and applies the rules in order: sleep/wake → late night → pout → blush → reminders → chit-chat → a stroll.
 
 ### Why `now` is passed in
 
@@ -174,7 +175,7 @@ context.selections = [hidden]   # same layout, just not painted
 
 ---
 
-## 6 · 🛡️ Never break, never get lost
+## 6 · 🦺 Never break, never get lost
 
 | Risk | Defence | Where |
 |---|---|---|
@@ -204,18 +205,98 @@ has_alpha = color_type in (4, 6)
 1. **Cut out**: the `isnet-anime` model (via `rembg`) predicts which pixels are her.
 2. **Tidy**: keep the big connected shape, drop specks, fill tiny holes.
 3. **De-fringe**: an edge pixel is a mix: `seen = α·her + (1−α)·white`. Solve for `her` and the white halo disappears on dark wallpapers.
-4. **Align**: find matching points on her **legs and shoes** (they don't change between expressions), then fit a similarity transform (move + scale + rotate) with RANSAC. A check makes sure the result actually overlaps better; otherwise the original is kept.
+4. **Align**: find matching points on her **legs and shoes** (they don't change between expressions) and work out how far each picture is shifted. RANSAC throws away bad matches, and the median of the good ones is the shift. Only *moving* is allowed by default: when scaling was allowed, slightly narrower slippers in one picture fooled it into shrinking her by 4%. (`--allow-scale` turns it back on for pictures really drawn at different sizes.) A check makes sure her feet actually line up better; otherwise the original is kept.
 5. **One canvas**: all expressions share a canvas centred on her feet, so the app can anchor every picture at the same point.
 
 ---
 
-## 8 · 🏆 Your turn
+## 8 · 🍃 Bringing her to life
 
-### 🟢 Blink
-Add `characters/yuki/blink/blink_01.png` (eyes closed). Then make her blink every few seconds.
+Phase 2 adds four things: **blinking, gravity, throwing and wandering**. They all live in `companion.py`, except *when* to wander, which is the brain's call.
+
+### Blinking
+
+```python
+BLINK_SECONDS = 0.13          # how long her eyes stay shut
+BLINK_GAP = (2.4, 6.0)        # random wait between blinks
+DOUBLE_BLINK_CHANCE = 0.18    # sometimes she blinks twice
+```
+
+A blink isn't a mood, so the brain never hears about it. It's a 0.13 s swap to `blink/blink_01.png`, and only while she shows `idle` with no crossfade running (a blink in the middle of a fade looks like a glitch). The **random** gap is what makes it feel alive: blinking on a fixed beat looks robotic, and real people blink irregularly, sometimes twice in a row.
+
+<details>
+<summary>🎨 Where the blink picture came from</summary>
+
+There was no "eyes closed" drawing, so `tools/make_blink.py` builds one from two pictures that already exist:
+
+1. Find her irises in `idle` by their wisteria colour.
+2. Paint over the open eyes with skin. Skin isn't one flat colour (it's lighter on one side), so it fits a gentle gradient, `colour = a·x + b·y + c`, to the skin around each eye and feathers the edge.
+3. Cut the two closed-eyelid strokes out of `sleep` and place them where the eyes were, at the same tilt.
+
+```powershell
+.venv\Scripts\python tools\make_blink.py characters\yuki --preview blink_check.png
+```
+</details>
+
+### Gravity in four lines
+
+Every frame she moves a little, using her speed in **pixels per second**:
+
+```python
+self._fall_vy = min(MAX_FALL_SPEED, self._fall_vy + GRAVITY * dt)   # gravity speeds her up
+self._fall_vx *= math.exp(-AIR_DRAG * dt)                            # air slows her sideways
+self._fx += self._fall_vx * dt
+self._fy += self._fall_vy * dt
+```
+
+| Detail | Why |
+|---|---|
+| Everything is multiplied by `dt` (seconds since the last frame) | She falls at the same speed at 15 fps, 30 fps, or on a busy PC |
+| `dt` is capped at 0.1 s | If Windows freezes her for a second, she doesn't teleport through the floor |
+| Slowing down is `exp(−k·dt)`, not "× 0.98 every frame" | A fixed factor per frame would slow her twice as fast at twice the frame rate |
+| Her position is kept as floats (`_fx`, `_fy`), rounded only for `move()` | Rounding every frame throws away small steps, so slow movement would stutter |
+| The floor is `availableGeometry().bottom()` | That's the top of the taskbar, on whichever screen is under her feet |
+| Walls bounce back 45% of her speed; a hard landing bounces once, at 20% | Springy, but not a pinball |
+
+`GRAVITY` is 3200 px/s². If 280 px is a 1.6 m girl, real gravity would be about 1700 px/s², but cartoon characters fall faster than real life, so the number was picked by eye: a drop from mid-screen takes about half a second.
+
+### Throwing: how fast was the mouse moving?
+
+When you let go, she flies off with your mouse's speed. Mouse events arrive at uneven times, so the speed is **smoothed** rather than taken from the last two events alone:
+
+```python
+self._vx = 0.6 * self._vx + 0.4 * (point.x() - last_x) / elapsed
+```
+
+While you hold her still, that speed fades away (`exp(−3.8·dt)` each frame), so carrying her somewhere and letting go gently doesn't fling her. When she lands, the `landed(impact)` signal tells the brain how hard she hit the ground: a big fall gets "Ow ow ow...", a soft one a happy face.
+
+### Wandering: the brain says *when*, the window says *how*
+
+```
+brain.py       every 45–140 s, if she's idle, awake and you're around   →  "wander"
+companion.py   if she's standing on the floor and not busy              →  hop-walk 120–380 px at 75 px/s
+```
+
+The brain just adds `"wander"` to the same queue as `"hop"` and `"shake"`. The window may say no (she's being carried, or falling), and that's fine. Thanks to this split, "she strolls every minute or two" is tested in `test_brain.py` without any window, and "she walks to the spot and stops" is tested in `test_qt_smoke.py` by stepping a fake clock frame by frame. The demo GIF in the README is recorded the same way (`tools/render_demo.py`): a pretend screen, a pretend clock, and the real window.
+
+> [!TIP]
+> If a pack has `walk/`, `fall/` or `drag/` pictures, they're used automatically while she walks, falls or is carried. Walk pictures are flipped when she heads left, so draw them facing right.
+
+<details>
+<summary>🧪 <b>Experiment</b></summary>
+
+Set `GRAVITY = 900.0` in `companion.py` and throw her: she floats like she's on the Moon. Then try `WALL_BOUNCE = 1.0` for a bouncy castle. (Put them back afterwards!)
+</details>
+
+---
+
+## 9 · 🏆 Your turn
+
+### 🟢 Give her real legs
+Right now she hop-walks. Draw a proper walk cycle.
 <details><summary>💡 Hint</summary>
 
-In `Companion._on_frame`, keep a `self._next_blink` time. When it passes and the expression is `idle`, swap to the blink picture for ~120 ms. `pack.has("blink")` tells you whether the picture exists.
+No code needed! Save 4 pictures of her walking, facing right, as `characters/yuki/walk/walk_01.png` … `walk_04.png` (same canvas size as `idle`, feet at the bottom centre). The app already uses them while she moves and flips them when she goes left. Set the speed in `character.json` with `"animations": {"walk": {"fps": 8}}`, then run `--check`.
 </details>
 
 ### 🟡 A new mood: "excited"
@@ -232,10 +313,18 @@ Press Ctrl+Alt+D anywhere to show/hide her.
 Global hotkeys need the OS: on Windows, `RegisterHotKey` via `ctypes` plus a native event filter. A good intro to how apps talk to Windows.
 </details>
 
-### 🔴 Walk along the taskbar (Phase 2)
+### 🟡 "Come here!"
+When you come back after being away, she walks over to stand under your mouse.
 <details><summary>💡 Hint</summary>
 
-Add `walk/walk_01..04.png`. A new base mood `walking` moves the window a few pixels per frame along `availableGeometry().bottom()`, flipping the image with `QImage.mirrored()` when she turns around. Stop at the screen edges.
+The brain knows when you return (`_wake`): queue a new animation such as `"come"`. In `app.py`'s `_apply`, turn it into `companion.start_wander(target_x=...)` using `QCursor.pos().x()`. `target_x` is the *window's* x, so subtract half her window width. Write the brain test first.
+</details>
+
+### 🔴 Sit on window edges
+Drop her onto a window and she sits on its top edge, like the classic Shimeji pets.
+<details><summary>💡 Hint</summary>
+
+On Windows, list windows with `EnumWindows` + `IsWindowVisible` through `ctypes`, skipping minimised ones and "cloaked" ones on other virtual desktops (`DwmGetWindowAttribute` with `DWMWA_CLOAKED`). Use `DWMWA_EXTENDED_FRAME_BOUNDS` for the real frame, because `GetWindowRect` includes invisible borders. In `_fall_step`, a window's top edge counts as a floor if her feet cross it from above. Then check about once a second that the window is still there and hasn't moved, and let her fall if it has. Mind the scaling: Windows gives physical pixels, Qt uses logical ones (divide by `devicePixelRatio`).
 </details>
 
 ---
