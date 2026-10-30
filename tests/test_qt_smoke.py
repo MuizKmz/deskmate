@@ -279,6 +279,66 @@ class QtSmokeTests(unittest.TestCase):
         self.assertFalse(bubble.isVisible())
         companion.close()
 
+    def test_chat_from_the_menu_shows_her_reply(self):
+        import random
+        from unittest import mock
+
+        from deskmate.app import Controller
+        from deskmate.brain import Brain
+        from deskmate.character import load_pack
+        from deskmate.chatbox import ChatSettingsDialog
+        from deskmate.companion import load_frames
+        from deskmate.settings import Settings
+        from deskmate.sysidle import IdleTracker
+        from tests.fake_openai import FakeOpenAI
+
+        fake = FakeOpenAI()
+        self.addCleanup(fake.close)
+        fake.reply = "[blush] W-well... thank you~"
+        with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
+            settings = Settings(Path(home) / "settings.json")
+            pack = load_pack(self.root)
+            brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5))
+            controller = Controller(self.app, settings, pack, load_frames(pack), brain, IdleTracker(lambda: (0, 0)))
+            controller.start()
+            controller.chat.config.api_key = fake.key
+            controller.chat.config.base_url = fake.url
+            controller.chat.config.model = ""  # let it pick one
+            controller.act_chat.trigger()
+            box = controller._chat_box
+            self.assertTrue(box.isVisible())
+            box.edit.setText("you look cute today")
+            box.edit.returnPressed.emit()
+            self.assertEqual(controller.bubble.text, "...")  # thinking
+            deadline = time.monotonic() + 10
+            while controller.bubble.text != "W-well... thank you~" and time.monotonic() < deadline:
+                spin(0.05)
+            self.assertEqual(controller.bubble.text, "W-well... thank you~")
+            self.assertEqual(brain.expression(time.monotonic()), "blush")
+            self.assertEqual(settings["chat_model"], "gpt-5.4-mini")  # remembered for next time
+            self.assertEqual(fake.requests[-1]["messages"][-1]["content"], "you look cute today")
+            self.assertTrue((Path(home) / "chat_testy.json").exists())
+            # A broken key: she says so in her own words instead of crashing.
+            controller.chat.config.api_key = "sk-wrong-key-000"
+            box.edit.setText("hello?")
+            box.edit.returnPressed.emit()
+            deadline = time.monotonic() + 10
+            while controller.bubble.text == "..." and time.monotonic() < deadline:
+                spin(0.05)
+            self.assertIn("key", controller.bubble.text)
+            # The settings dialog opens and hides the key field for Ollama.
+            dialog = ChatSettingsDialog(settings, fake.key, "Testy")
+            self.assertIn("...", dialog.key.placeholderText())
+            dialog.provider.setCurrentIndex(1)
+            self.assertEqual(dialog.config().provider, "ollama")
+            self.assertEqual(dialog.config().api_key, "")
+            dialog.close()
+            controller._forget_chat()
+            self.assertEqual(controller.chat.history, [])
+            box.hide()
+            controller._on_about_to_quit()
+            controller.companion.close()
+
     def test_whole_app_wiring(self):
         import logging
         import random

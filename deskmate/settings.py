@@ -50,6 +50,10 @@ SCHEMA: dict[str, tuple[Any, Callable[[Any], bool]]] = {
     "reminders": (True, _is_bool),
     "gravity": (True, _is_bool),
     "wander": (True, _is_bool),
+    "chat_provider": ("openai", lambda v: v in ("openai", "ollama")),
+    "chat_model": ("", lambda v: isinstance(v, str) and len(v) < 120),
+    "ollama_url": ("http://localhost:11434/v1", lambda v: isinstance(v, str) and v.startswith(("http://", "https://"))),
+    "ollama_model": ("", lambda v: isinstance(v, str) and len(v) < 120),
 }
 
 

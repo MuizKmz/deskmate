@@ -196,6 +196,7 @@ def main() -> None:
         "author": "DeskMate",
         "version": "1.0",
         "personality": "cheerful, a bit dramatic, music-loving",
+        "persona": "You are a cheerful little pixel-art girl with headphones. You love games, music and cheering the user on, and you talk with lots of energy, like a friendly gamer buddy.",
         "smooth": False,
         "head": {"x": round(15.5 / W, 4), "y": round(14 / H, 4), "top": round(1 / H, 4)},
         "theme": {"bubble": "#FFFFFF", "accent": "#3FB6A8", "text": "#2B1D2E"},

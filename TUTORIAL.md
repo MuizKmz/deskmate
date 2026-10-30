@@ -5,7 +5,7 @@
 ### A guided tour: see-through windows, animation, a testable "brain", and the habits that make an app robust
 
 ![Level](https://img.shields.io/badge/level-intermediate-blueviolet?style=flat-square)
-![Time](https://img.shields.io/badge/time-~90_min-orange?style=flat-square)
+![Time](https://img.shields.io/badge/time-~2_hours-orange?style=flat-square)
 
 [← Back to README](README.md)
 
@@ -27,7 +27,8 @@
 | 6 | [Never break, never get lost](#6---never-break-never-get-lost) | `settings.py`, `app.py` | Atomic saves, screen clamping, logging, one instance |
 | 7 | [Character packs](#7---character-packs) | `character.py`, `tools/` | Validating input, and how the image clean-up works |
 | 8 | [Bringing her to life](#8---bringing-her-to-life) | `companion.py`, `brain.py` | Blinking, gravity, throwing, wandering, frame-rate-proof physics |
-| 9 | [Your turn](#9---your-turn) | | Challenges with hints |
+| 9 | [Talking with AI](#9---talking-with-ai) | `chat.py`, `chatbox.py` | One API for OpenAI and Ollama, threads, prompts, testing with a fake server |
+| 10 | [Your turn](#10---your-turn) | | Challenges with hints |
 
 ---
 
@@ -290,7 +291,68 @@ Set `GRAVITY = 900.0` in `companion.py` and throw her: she floats like she's on 
 
 ---
 
-## 9 · 🏆 Your turn
+## 9 · 🧠 Talking with AI
+
+Phase 3 lets you type to her. Three files: `chat.py` (talks to the model, no Qt at all), `chatbox.py` (the text box and the settings dialog), and a few methods in `app.py` that connect them.
+
+### One protocol, many brains
+
+OpenAI's **chat completions** format became the common language: OpenAI speaks it, and so does Ollama on your own PC. So DeskMate needs just one function:
+
+```python
+POST {url}/chat/completions
+{"model": "gpt-...-mini",
+ "messages": [{"role": "system", "content": "You are Yuki..."},
+              {"role": "user", "content": "hi!"}]}
+→ {"choices": [{"message": {"content": "[happy] Hi~ you're back!"}}]}
+```
+
+Switching between OpenAI and Ollama only changes the address (`https://api.openai.com/v1` or `http://localhost:11434/v1`) and whether a key is sent. It uses Python's built-in `urllib`, so there's no new package to install.
+
+### Never freeze the window
+
+A reply can take a few seconds. If the request ran on the Qt thread, she'd freeze mid-breath and you couldn't drag her. So `Background.run()` does the slow part on a thread and sends the result back with a **signal**:
+
+```python
+threading.Thread(target=lambda: self._done.emit(callback, work())).start()
+```
+
+Qt delivers a signal emitted from another thread on the main thread (a *queued connection*), so the callback can safely touch widgets. Rule of thumb: **threads may compute, only the main thread may touch widgets.**
+
+### The prompt is the character
+
+Everything that makes her *Yuki* is in the messages, rebuilt for every question:
+
+| Part | Where it comes from |
+|---|---|
+| Who she is | `persona_prompt()`: name, personality and `persona` from `character.json` |
+| How to answer | "1–2 short sentences", "no markdown" (it's a small bubble) |
+| Her face | "Start every reply with your mood: `[happy]`, `[blush]`…", split off by `parse_reply()` |
+| Right now | `situation()`: the time, her mood, how long you've worked without a break |
+| Memory | today's last 12 messages, saved in `chat_<character>.json` |
+
+The mood tag is a nice trick: one answer carries both the words *and* the expression, and `parse_reply()` still copes when the model forgets it (unknown or missing → `talk`).
+
+### Failing gently
+
+Every problem becomes a `ChatError` with a `kind` (`no_key`, `auth`, `quota`, `offline`, …), and each kind has a line in her own voice (`OFFLINE_LINES`). The technical detail goes to the log, never the key itself.
+
+### Testing without a key
+
+`tests/fake_openai.py` is a tiny HTTP server on `127.0.0.1` that pretends to be OpenAI. The tests point DeskMate at it and check what was sent (persona first, your message last, the `Bearer` key) and what happens with a wrong key or a 429. They even click through the real chat box. No internet, no cost, and the tests run in seconds.
+
+> [!WARNING]
+> An API key is like a password that can spend money. That's why it lives in `%APPDATA%\DeskMate\secrets.json` and not in `settings.json` or the project folder (which goes to GitHub), and why the settings box shows only `sk-...abcd`.
+
+<details>
+<summary>🧪 <b>Experiment</b></summary>
+
+Edit `"persona"` in `characters/yuki/character.json` (say, make her talk like a pirate), restart, and chat. Then change `HISTORY_TURNS` in `chat.py` to `2` and see how quickly she forgets.
+</details>
+
+---
+
+## 10 · 🏆 Your turn
 
 ### 🟢 A waving animation
 Make her wave when you come back to your PC.
@@ -318,6 +380,13 @@ When you come back after being away, she walks over to stand under your mouse.
 <details><summary>💡 Hint</summary>
 
 The brain knows when you return (`_wake`): queue a new animation such as `"come"`. In `app.py`'s `_apply`, turn it into `companion.start_wander(target_x=...)` using `QCursor.pos().x()`. `target_x` is the *window's* x, so subtract half her window width. Write the brain test first.
+</details>
+
+### 🔴 Claude as a third brain
+Add Anthropic's Claude next to OpenAI and Ollama.
+<details><summary>💡 Hint</summary>
+
+Claude uses its own format: `POST https://api.anthropic.com/v1/messages` with the headers `x-api-key` and `anthropic-version: 2023-06-01`, the system prompt as a separate `"system"` field, a required `"max_tokens"`, and the answer in `content[0].text`. Add a `"claude"` provider in `ChatConfig`, a small branch in `ChatSession.ask`, and a test against a fake server like `tests/fake_openai.py`.
 </details>
 
 ### 🔴 Sit on window edges

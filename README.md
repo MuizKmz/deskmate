@@ -9,11 +9,11 @@ dozes off when you leave, pouts when you ignore her, and reminds you to drink wa
 ![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/PySide6-Qt_6-41CD52?style=for-the-badge&logo=qt&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10_/_11-0078D4?style=for-the-badge&logo=windows&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-51_passing-2ea44f?style=for-the-badge)
+![Tests](https://img.shields.io/badge/tests-68_passing-2ea44f?style=for-the-badge)
 
 <img src="docs/demo.gif" alt="Yuki on the desktop: blinking, patted, strolling along the taskbar, flung across the screen, talking, then falling asleep" width="640">
 
-[**Start**](#-start-in-one-double-click) · [**Play with her**](#-play-with-her) · [**Moods**](#-her-moods) · [**Characters**](#-characters) · [**📖 How it works**](TUTORIAL.md)
+[**Start**](#-start-in-one-double-click) · [**Play with her**](#-play-with-her) · [**Chat**](#-chat-with-her) · [**Moods**](#-her-moods) · [**Characters**](#-characters) · [**📖 How it works**](TUTORIAL.md)
 
 </div>
 
@@ -31,6 +31,7 @@ dozes off when you leave, pouts when you ignore her, and reminds you to drink wa
 | 😤 **Has feelings** | Pouts if you work for ages without saying hi. One pat and she forgives you. |
 | 💧 **Takes care of you** | Gentle reminders to drink water and take a stretch break (can be switched off). |
 | 💬 **Talks** | Speech bubbles with a typing effect, from her own lines in `character.json`. |
+| 🧠 **Chats with you** | Type to her and she answers in character, powered by OpenAI or a free local model (Ollama). Remembers your day. |
 | 🛡️ **Hard to break** | One copy at a time, safe settings saves, never gets lost off-screen, logs every error, and still starts if images are missing. |
 
 ---
@@ -52,7 +53,7 @@ After that it starts instantly. To start her with Windows, right-click her → *
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 51 self-tests
+run_deskmate.bat --test        # run the 68 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -78,9 +79,34 @@ python -m venv .venv
 | **Right-click** her (or the tray icon) | The menu ⬇️ |
 | Click the **tray icon** | Hide / show her |
 
-**Menu:** Talk to me · Take a walk · Go to sleep / Wake up · Character · Size (small / medium / large) · Always on top · Gravity · Wander around · Chit-chat now and then · Care reminders · Start with Windows · Move back to the corner · Open settings & logs folder · Quit
+**Menu:** Chat with Yuki · Talk to me · Take a walk · Go to sleep / Wake up · Character · Size (small / medium / large) · Always on top · Gravity · Wander around · Chit-chat now and then · Care reminders · Start with Windows · Move back to the corner · Chat settings · Forget today's chat · Open settings & logs folder · Quit
 
 > Want her to stay exactly where you put her (say, mid-screen)? Untick **Gravity**.
+
+---
+
+## 💬 Chat with her
+
+Right-click her → **Chat with Yuki...**, type, press Enter. She answers in her bubble, in character, and her face follows the mood of her answer.
+
+<img src="docs/chat.png" alt="Yuki blushing and answering in her speech bubble, with the chat box beside her" width="560">
+
+The first time, the **Chat settings** box opens. Pick her "chat brain":
+
+| | **OpenAI** | **Ollama** |
+|---|---|---|
+| Cost | Pay per message (a fraction of a cent) | Free |
+| Smartness | Best at staying in character | OK, depends on the model |
+| Privacy | Messages go to OpenAI | Everything stays on your PC |
+| Setup | Paste an [API key](https://platform.openai.com/api-keys) | Install [Ollama](https://ollama.com), run `ollama pull llama3.2` |
+
+- Leave **Model** empty or click **Pick for me**: DeskMate asks which models your key can use and picks a cheap "mini" one.
+- She remembers what you talked about **today** (even after a restart), and starts fresh tomorrow. Right-click → **Forget today's chat** to clear it.
+- While you chat, she doesn't interrupt with reminders or wander off.
+- No key, no internet, out of credit? She tells you in her own words, and everything else keeps working.
+
+> [!IMPORTANT]
+> Your key is saved only on your PC, in `%APPDATA%\DeskMate\secrets.json`, never in this folder, so it can't end up on GitHub. Set a monthly spending limit on your OpenAI account to be safe. You can also use the `OPENAI_API_KEY` environment variable instead.
 
 ---
 
@@ -157,6 +183,7 @@ characters/
 | She won't stay where I put her | Untick **Gravity** (and **Wander around** if she walks off). |
 | Weird behaviour | Right-click → **Open settings & logs folder** → `deskmate.log`. |
 | Start fresh | Quit her, delete `settings.json` in that folder. |
+| Chat says the key doesn't work | Right-click → **Chat settings** → paste the key again → **Test connection**. |
 
 Settings and logs live in `%APPDATA%\DeskMate`.
 
@@ -170,6 +197,8 @@ deskmate/
 ├── companion.py        her see-through window: drawing, animation, mouse
 ├── brain.py            moods and what to say (pure Python, fully tested)
 ├── bubble.py           speech bubble with typing effect
+├── chat.py             talking to OpenAI / Ollama (pure Python, tested with a fake server)
+├── chatbox.py          the chat box and the Chat settings dialog
 ├── character.py        loads + checks character packs
 ├── settings.py         settings with safe saves
 ├── single_instance.py  only one DeskMate at a time
@@ -182,15 +211,16 @@ tools/make_blink.py          makes a blink picture from idle + sleep
 tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
-tests/                       51 tests (python -m unittest)
+tests/                       68 tests (python -m unittest)
 ```
 
 ## 🛣️ Next phases
 
 - ✅ **Phase 1 — Companion:** floating window, moods, speech, tray, safe settings.
 - ✅ **Phase 2 — Alive:** blinking, gravity, flinging, walking along the taskbar with a real walk cycle.
+- ✅ **Phase 3 — AI:** chat with her (OpenAI or a free local model with Ollama), she remembers your day.
 - **Phase 2½ — Perch:** sit on the top edge of your windows (Windows API).
-- **Phase 3 — AI:** chat with her (Claude API or a local model with Ollama), she remembers your day.
+- **Phase 3½:** Claude as a third chat brain, a chat log window, voice.
 - **Phase 4 — Online:** a shared pet for your team on a small server.
 
 ---

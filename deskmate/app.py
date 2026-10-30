@@ -201,6 +201,9 @@ class Controller:
         self.bubble.set_on_top(settings["always_on_top"])
         self._tooltip = ""
         self._walk_after_landing = False
+        self._chat_box = None
+        self._chat_worker = None
+        self.chat = self._make_chat()
 
         self.companion.clicked.connect(self._on_click)
         self.companion.dragStarted.connect(lambda: self._event(self.brain.on_drag_start))
@@ -307,6 +310,103 @@ class Controller:
         if self.companion.start_wander():
             self._event(self.brain.on_walk_request)
 
+    # ------------------------------------------------------------------- chat
+    def _make_chat(self):
+        from .chat import ChatConfig, ChatSession, load_key, persona_prompt
+
+        ollama = self.settings["chat_provider"] == "ollama"
+        config = ChatConfig(
+            provider=self.settings["chat_provider"],
+            model=self.settings["ollama_model" if ollama else "chat_model"],
+            api_key="" if ollama else load_key(data_dir() / "secrets.json"),
+            base_url=self.settings["ollama_url"] if ollama else "",
+        )
+        return ChatSession(config, persona_prompt(self.pack.meta, self.pack.name),
+                           path=data_dir() / f"chat_{self.pack.id}.json")
+
+    def open_chat(self) -> None:
+        """Menu: open the little chat box next to her."""
+        from PySide6.QtCore import QRect
+
+        from .chatbox import Background, ChatBox
+
+        if self.chat.config.needs_key and not self.chat.config.api_key:
+            if not self.open_chat_settings():
+                return
+        if not self.companion.isVisible():
+            self.show_companion()
+        if self._chat_box is None:
+            self._chat_box = ChatBox(self.pack.name, self.pack.theme)
+            self._chat_box.sent.connect(self._on_chat_sent)
+        if self._chat_worker is None:
+            self._chat_worker = Background()
+        sprite = self.companion._sprite_rect_local()
+        body = QRect(self.companion.mapToGlobal(sprite.topLeft()), sprite.size())
+        self._chat_box.open_near(body, self.companion.available_rect())
+
+    def _on_chat_sent(self, text: str) -> None:
+        from datetime import datetime
+
+        from .chat import situation
+
+        now = time.monotonic()
+        self.brain.on_chat_sent(now)
+        self._apply(now)
+        self.bubble.say("...", 60, self.companion.head_rect_global(), self.companion.available_rect())
+        self._chat_box.set_waiting(True)
+        worked = (now - self.brain._active_since) / 60.0
+        context = situation(datetime.now(), self.brain.label(now), worked)
+        session = self.chat
+        self._chat_worker.run(lambda: session.ask(text, context), self._on_chat_reply)
+
+    def _on_chat_reply(self, ok: bool, value) -> None:
+        from .chat import OFFLINE_LINES, ChatError
+
+        if self._chat_box is not None:
+            self._chat_box.set_waiting(False)
+        now = time.monotonic()
+        if ok:
+            mood, reply = value
+            key = "ollama_model" if self.chat.config.provider == "ollama" else "chat_model"
+            if not self.settings[key] and self.chat.config.model:
+                self._set(key, self.chat.config.model)  # remember the model that was picked for you
+        else:
+            kind = value.kind if isinstance(value, ChatError) else "server"
+            log.warning("Chat failed (%s): %s", kind, getattr(value, "detail", value))
+            mood, reply = ("pouty" if kind in ("no_key", "auth", "quota") else "sleepy"), OFFLINE_LINES[kind]
+        self.bubble.dismiss()
+        self.brain.on_chat_reply(now, mood, reply)
+        self._apply(now)
+
+    def open_chat_settings(self) -> bool:
+        """Menu: the Chat settings dialog. Returns True if saved."""
+        from .chat import load_key, save_key
+        from .chatbox import ChatSettingsDialog
+
+        secrets = data_dir() / "secrets.json"
+        dialog = ChatSettingsDialog(self.settings, load_key(secrets), self.pack.name)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return False
+        provider = dialog.chosen_provider
+        self._set("chat_provider", provider)
+        if provider == "ollama":
+            self._set("ollama_url", dialog.url.text().strip() or self.settings["ollama_url"])
+            self._set("ollama_model", dialog.chosen_model)
+        else:
+            self._set("chat_model", dialog.chosen_model)
+            if dialog.key.text().strip():
+                save_key(secrets, dialog.key.text())
+        self.settings.save()
+        history = self.chat.history
+        self.chat = self._make_chat()
+        self.chat.history = history
+        log.info("Chat settings saved (provider %s)", provider)
+        return True
+
+    def _forget_chat(self) -> None:
+        self.chat.forget()
+        self._event(lambda now: self.brain.on_chat_reply(now, "surprised", "Huh? What were we talking about?"))
+
     def _on_moved(self) -> None:
         if self.bubble.isVisible():
             self.bubble.reposition(self.companion.head_rect_global(), self.companion.available_rect())
@@ -355,6 +455,7 @@ class Controller:
 
         self.act_toggle = action(f"Hide {name}", self.toggle_visible)
         self.act_talk = action("Talk to me", lambda: self._event(self.brain.on_talk_request))
+        self.act_chat = action(f"Chat with {name}...", self.open_chat)
         self.act_walk = action("Take a walk", self.take_walk)
         self.act_sleep = action("Go to sleep", self._toggle_sleep)
         menu.addSeparator()
@@ -383,6 +484,8 @@ class Controller:
             self.act_autostart = action("Start with Windows", self._set_autostart, True, autostart.is_enabled())
         menu.addSeparator()
         action("Move back to the corner", self.companion.reset_position)
+        action("Chat settings...", self.open_chat_settings)
+        action("Forget today's chat", self._forget_chat)
         action("Open settings && logs folder", self._open_data_folder)
         menu.addSeparator()
         action("Quit DeskMate", self.quit)
@@ -435,6 +538,11 @@ class Controller:
         if self.tray is not None:
             self.tray.setIcon(self.icon)
         self._set("character", pack.id)
+        self.chat = self._make_chat()
+        if self._chat_box is not None:
+            self._chat_box.hide()
+            self._chat_box.deleteLater()
+            self._chat_box = None
         self._event(self.brain.on_start)
 
     def _refresh_menu(self) -> None:
@@ -442,6 +550,7 @@ class Controller:
 
         self._fill_character_menu()
         self.act_toggle.setText(f"Hide {self.pack.name}" if self.companion.isVisible() else f"Show {self.pack.name}")
+        self.act_chat.setText(f"Chat with {self.pack.name}...")
         self.act_sleep.setText("Wake up" if self.brain.asleep else "Go to sleep")
         if self.act_autostart is not None:
             self.act_autostart.blockSignals(True)
@@ -531,6 +640,8 @@ class Controller:
         self._save_timer.stop()
         self.settings.save()
         self.bubble.dismiss()
+        if self._chat_box is not None:
+            self._chat_box.hide()
         if self.tray is not None:
             self.tray.hide()
 

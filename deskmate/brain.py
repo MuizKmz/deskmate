@@ -97,6 +97,7 @@ class Brain:
         self._next_wander = now + self.rng.uniform(WANDER_MIN, WANDER_MAX)
         self._late_day = None
         self._speech_until = -1e9
+        self._chatting_until = -1e9  # quiet time while you're chatting with her
         self._speech: list[Speech] = []
         self._animations: list[str] = []
 
@@ -238,6 +239,27 @@ class Brain:
             return
         self._react("happy", now, 1.5)
 
+    # -------------------------------------------------------------------- chat
+    def on_chat_sent(self, now: float) -> None:
+        """You wrote to her. She wakes up, stops pouting (talking to her counts as saying hi) and listens."""
+        if self.base == "sleep" or self.manual_sleep:
+            self._wake(now, quiet=True)
+        if self.base in ("pouty", "sleepy"):
+            self.base = "idle"
+        self.last_interaction = now
+        self._ignored_said = False
+        self._chatting_until = now + 90
+        self._react("blush" if self.rng.random() < 0.3 else "happy", now, 1.2)
+
+    def on_chat_reply(self, now: float, mood: str, text: str) -> None:
+        """Her answer from the chat model: show it in the bubble with the mood it came with."""
+        duration = min(14.0, speech_duration(text) + 0.04 * max(0, len(text) - 90))
+        self._speech.append(Speech(text, duration))
+        self._speech_until = now + duration
+        self._react(mood or "talk", now, duration)
+        self.last_interaction = now
+        self._chatting_until = now + 90
+
     def on_hover(self, now: float, inside: bool) -> None:
         if inside:
             self._hover_since = now
@@ -340,7 +362,8 @@ class Brain:
         awake = self.base != "sleep"
 
         # Care reminders.
-        if self.reminders and awake and user_active and not self._speaking(now):
+        chatting = now < self._chatting_until
+        if self.reminders and awake and user_active and not chatting and not self._speaking(now):
             if now - self._last_water >= WATER_EVERY:
                 self._last_water = now
                 self._say("water", now)
@@ -349,13 +372,13 @@ class Brain:
                 self._say("break", now)
 
         # Random chit-chat.
-        if self.chatty and self.base == "idle" and user_active and now >= self._next_chatter:
+        if self.chatty and self.base == "idle" and user_active and not chatting and now >= self._next_chatter:
             self._next_chatter = now + self.rng.uniform(CHATTER_MIN, CHATTER_MAX)
             if not self._speaking(now) and not self._dragging:
                 self._say("random", now)
 
         # A little stroll along the taskbar (the window decides if it's possible right now).
-        if self.wander and self.base == "idle" and user_active and now >= self._next_wander:
+        if self.wander and self.base == "idle" and user_active and not chatting and now >= self._next_wander:
             self._next_wander = now + self.rng.uniform(WANDER_MIN, WANDER_MAX)
             if not self._speaking(now) and not self._dragging:
                 self._animations.append("wander")
