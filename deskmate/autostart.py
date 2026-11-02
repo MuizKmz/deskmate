@@ -69,11 +69,34 @@ def set_enabled(enabled: bool) -> bool:
         return False
 
 
+def _program_in(command: str) -> Path | None:
+    """The program a startup command runs: the first quoted (or first plain) word."""
+    command = command.strip()
+    if command.startswith('"'):
+        end = command.find('"', 1)
+        return Path(command[1:end]) if end > 1 else None
+    return Path(command.split()[0]) if command else None
+
+
+def needs_repair(current: str | None, ours: str) -> bool:
+    """Only fix the entry when what it points at is gone (the folder was moved or deleted).
+
+    If it points at another DeskMate that still exists (say the installed app, while you
+    also run the source folder), leave it alone, so two copies don't keep stealing it."""
+    if not current or current == ours:
+        return False
+    program = _program_in(current)
+    if program is None or not program.exists():
+        return True
+    script = current[len(f'"{program}"'):].strip().strip('"') if current.startswith('"') else ""
+    return bool(script) and script.endswith(".pyw") and not Path(script).exists()
+
+
 def refresh_if_moved() -> None:
-    """If the DeskMate folder was moved, point the startup entry at the new place."""
+    """If the DeskMate this entry starts was moved or deleted, point the entry at this copy."""
     if not supported():
         return
     current = _read()
-    if current and current != launch_command():
-        log.info("DeskMate folder moved; updating the startup entry")
+    if needs_repair(current, launch_command()):
+        log.info("The startup entry pointed at a DeskMate that's gone; updating it")
         set_enabled(True)

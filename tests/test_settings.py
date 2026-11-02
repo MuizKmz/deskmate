@@ -62,5 +62,32 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings["size"], "medium")
 
 
+class AutostartRepairTests(unittest.TestCase):
+    def test_only_repairs_entries_that_point_at_a_missing_deskmate(self):
+        import tempfile
+        from pathlib import Path
+
+        from deskmate.autostart import needs_repair
+
+        with tempfile.TemporaryDirectory() as root:
+            installed = Path(root) / "Programs" / "DeskMate" / "DeskMate.exe"
+            installed.parent.mkdir(parents=True)
+            installed.write_text("")
+            pythonw = Path(root) / "venv" / "pythonw.exe"
+            pythonw.parent.mkdir()
+            pythonw.write_text("")
+            script = Path(root) / "src" / "run_deskmate.pyw"
+            script.parent.mkdir()
+            script.write_text("")
+            source = f'"{pythonw}" "{script}"'
+            self.assertFalse(needs_repair(None, source))                 # Start with Windows is off
+            self.assertFalse(needs_repair(source, source))               # already ours
+            self.assertFalse(needs_repair(f'"{installed}"', source))     # the installed app: leave it
+            self.assertFalse(needs_repair(source, f'"{installed}"'))     # and the other way round
+            self.assertTrue(needs_repair(f'"{Path(root) / "old" / "DeskMate.exe"}"', source))  # moved
+            self.assertTrue(needs_repair(f'"{pythonw}" "{Path(root) / "gone" / "run_deskmate.pyw"}"', source))
+            self.assertTrue(needs_repair('""', source))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -59,7 +59,7 @@ Double-click **`run_deskmate.bat`**. The first time, it sets itself up (about 1â
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 70 self-tests
+run_deskmate.bat --test        # run the 71 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -218,7 +218,7 @@ tools/make_blink.py          makes a blink picture from idle + sleep
 tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
-tests/                       70 tests (python -m unittest)
+tests/                       71 tests (python -m unittest)
 packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno Setup)
 .github/workflows/           tests on every push; a tagged push builds and publishes a release
 ```
