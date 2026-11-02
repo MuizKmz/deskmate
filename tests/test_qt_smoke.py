@@ -55,6 +55,16 @@ def mouse(widget, kind, local, button=None, buttons=None):
     QApplication.sendEvent(widget, event)
 
 
+class ActiveUser:
+    """Pretend someone is using the PC right now. (The real idle time on a CI machine is
+    "nobody touched it for ages", which would make her yawn instead of saying hello.)"""
+
+    source = "test"
+
+    def seconds(self) -> float:
+        return 0.0
+
+
 def spin(seconds):
     end = time.monotonic() + seconds
     while time.monotonic() < end:
@@ -289,7 +299,6 @@ class QtSmokeTests(unittest.TestCase):
         from deskmate.chatbox import ChatSettingsDialog
         from deskmate.companion import load_frames
         from deskmate.settings import Settings
-        from deskmate.sysidle import IdleTracker
         from tests.fake_openai import FakeOpenAI
 
         fake = FakeOpenAI()
@@ -299,7 +308,7 @@ class QtSmokeTests(unittest.TestCase):
             settings = Settings(Path(home) / "settings.json")
             pack = load_pack(self.root)
             brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5))
-            controller = Controller(self.app, settings, pack, load_frames(pack), brain, IdleTracker(lambda: (0, 0)))
+            controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
             controller.start()
             controller.chat.config.api_key = fake.key
             controller.chat.config.base_url = fake.url
@@ -348,7 +357,6 @@ class QtSmokeTests(unittest.TestCase):
         from deskmate.character import load_pack
         from deskmate.companion import load_frames
         from deskmate.settings import Settings
-        from deskmate.sysidle import IdleTracker
 
         import shutil
 
@@ -365,7 +373,7 @@ class QtSmokeTests(unittest.TestCase):
             with self.assertLogs("deskmate", level="INFO") as captured:
                 logging.getLogger("deskmate").info("test started")
                 controller = Controller(self.app, settings, pack, load_frames(pack), brain,
-                                        IdleTracker(lambda: (0, 0)))
+                                        ActiveUser())
                 controller.start(first_run=True)
                 spin(0.4)
                 self.assertTrue(controller.bubble.isVisible())
