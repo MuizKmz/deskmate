@@ -100,6 +100,24 @@
       "Let's sit over here~",
       "Just stretching my legs~",
       "Mm, a change of view."
+    ],
+    "reminder": [
+      "Hey~ it's time: {what}!",
+      "Psst... don't forget: {what}~",
+      "Time's up! {what}, okay?"
+    ],
+    "reminder_missed": [
+      "While I was gone, you had: {what}... did you remember?",
+      "Um... earlier you wanted to: {what}"
+    ],
+    "reminder_set": [
+      "Okay~ I'll remind you at {time}.",
+      "Got it! {time}, I won't forget~"
+    ],
+    "bedtime": [
+      "It's so late... let's go to bed soon, okay?",
+      "*yawn*... your eyes need rest too, you know.",
+      "Mmh... sleep is important. Just a little more, then bed?"
     ]
   }
 }

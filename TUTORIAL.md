@@ -334,6 +334,18 @@ Everything that makes her *Yuki* is in the messages, rebuilt for every question:
 
 The mood tag is a nice trick: one answer carries both the words *and* the expression, and `parse_reply()` still copes when the model forgets it (unknown or missing → `talk`).
 
+### Reminders: letting the model *do* something
+
+A chat model only produces text. To let her actually set a reminder, the prompt teaches her a tiny tag:
+
+```
+[happy] Okay~ I'll tell you at 3! <remind when="3pm">the meeting</remind>
+```
+
+`extract_reminders()` cuts the tag out (so it never shows in the bubble), and the app turns `when` into a real time with `reminders.parse_when()`: the same parser the **Add reminder...** box uses, so both paths are tested by the same tests. If the model writes a time the parser doesn't understand, she says so instead of silently forgetting. Big AI apps call this idea *tool use* or *function calling*; this is the hand-made version.
+
+The time parser is a good example of testing many small cases: `tests/test_reminders.py` checks `3pm`, `15:00`, `in 20 min`, `1h30`, and also what must **not** count as a time (`10 push-ups` is not "in 10 minutes").
+
 ### Failing gently
 
 Every problem becomes a `ChatError` with a `kind` (`no_key`, `auth`, `quota`, `offline`, …), and each kind has a line in her own voice (`OFFLINE_LINES`). The technical detail goes to the log, never the key itself.
@@ -360,7 +372,7 @@ Running from source needs Python. Real users want a download that just works. Th
 ```mermaid
 flowchart LR
     T["git push origin v0.3.0"] --> GA[GitHub Actions<br/>Windows machine]
-    GA --> TS[Run the 71 tests]
+    GA --> TS[Run the 85 tests]
     TS --> PI["PyInstaller<br/>DeskMate.exe + _internal"]
     PI --> CK["DeskMate.exe --check"]
     CK --> IS[Inno Setup<br/>installer]

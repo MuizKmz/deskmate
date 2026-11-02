@@ -252,6 +252,48 @@ class WanderTests(unittest.TestCase):
         self.assertNotIn("wander", self.tick_through(brain, B.WANDER_MAX * 3))
 
 
+class ReminderAndBedtimeTests(unittest.TestCase):
+    def make(self, hour=12, **kwargs):
+        lines = dict(LINES, reminder=["Time: {what}!"], reminder_missed=["Missed: {what}"],
+                     reminder_set=["At {time}~"], bedtime=["<bedtime>"])
+        clock = Clock(hour)
+        return Brain(lines, now=0.0, rng=random.Random(1), wallclock=clock, chatty=False, **kwargs), clock
+
+    def test_a_due_reminder_wakes_her_and_she_says_it(self):
+        brain, _ = self.make()
+        brain.set_manual_sleep(0, True)
+        texts(brain)
+        brain.on_reminder(10, "the meeting")
+        self.assertFalse(brain.asleep)
+        speech = brain.drain_speech()
+        self.assertEqual(speech[0].text, "Time: the meeting!")
+        self.assertGreaterEqual(speech[0].duration, 6.0)  # stays up a little longer
+        self.assertIn("hop", brain.drain_animations())
+        self.assertEqual(brain.expression(11), "surprised")
+        brain.on_reminder(20, "tea", missed=True)
+        self.assertEqual(texts(brain), ["Missed: tea"])
+        brain.on_reminder_set(30, "15:00")
+        self.assertEqual(texts(brain), ["At 15:00~"])
+
+    def test_bedtime_nudges_every_45_minutes_when_working_late(self):
+        brain, clock = self.make(hour=23)
+        clock.now = clock.now.replace(minute=30)
+        said = []
+        for t in range(0, 100 * 60, 60):
+            brain.last_interaction = t  # no pouting
+            brain.tick(t, user_idle=1)
+            said += [(t, text) for text in texts(brain) if text == "<bedtime>"]
+        self.assertEqual([t for t, _ in said][:3], [0, B.BEDTIME_EVERY, 2 * B.BEDTIME_EVERY])
+
+    def test_no_bedtime_in_the_day_when_away_or_switched_off(self):
+        for hour, idle, kwargs in ((15, 1, {}), (23, B.SLEEP_AFTER + 1, {}), (23, 1, {"reminders": False})):
+            brain, _ = self.make(hour=hour, **kwargs)
+            for t in range(0, 3600, 60):
+                brain.last_interaction = t
+                brain.tick(t, user_idle=idle)
+            self.assertNotIn("<bedtime>", texts(brain), (hour, idle, kwargs))
+
+
 class DurationTests(unittest.TestCase):
     def test_bubble_time_grows_with_text_but_is_capped(self):
         self.assertAlmostEqual(B.speech_duration("hi"), 2.4)

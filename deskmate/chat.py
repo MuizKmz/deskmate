@@ -35,6 +35,7 @@ MAX_REPLY_CHARS = 260
 TIMEOUT = 45.0
 
 _MOOD_TAG = re.compile(r"^\s*\[(\w+)\]\s*")
+_REMIND_TAG = re.compile(r"<remind\s+when\s*=\s*[\"']([^\"'<>]{1,40})[\"']\s*>(.{0,200}?)</remind>", re.I | re.S)
 
 
 class ChatError(Exception):
@@ -153,6 +154,9 @@ def persona_prompt(pack_meta: dict, name: str) -> str:
         "No markdown, lists or emoji codes. A simple ~ or ... is fine.",
         f"Start every reply with your mood in brackets, one of: {', '.join('[' + m + ']' for m in MOODS)}. "
         "Example: [happy] Ehehe, thanks~",
+        "If (and only if) the user asks you to remind them of something, confirm it in your own words and add "
+        'this at the very end: <remind when="15:00">the meeting</remind>. "when" is a clock time like 15:00 or 3pm, '
+        'or a delay like "in 20 min". The app shows the reminder at that time, so never say you can\'t do reminders.',
     ]
     return "\n".join(lines)
 
@@ -166,6 +170,12 @@ def situation(now: datetime, mood: str, worked_minutes: float | None) -> str:
     return text
 
 
+def extract_reminders(text: str) -> tuple[str, list[tuple[str, str]]]:
+    """Take ``<remind when="3pm">the meeting</remind>`` tags out of a reply: (text, [(when, what)])."""
+    found = [(m.group(1).strip(), re.sub(r"\s+", " ", m.group(2)).strip()) for m in _REMIND_TAG.finditer(text or "")]
+    return _REMIND_TAG.sub("", text or "").strip(), found[:3]
+
+
 def parse_reply(text: str) -> tuple[str, str]:
     """Split ``"[happy] Hello!"`` into ``("happy", "Hello!")`` and tidy it for the bubble."""
     mood = "talk"
@@ -176,6 +186,7 @@ def parse_reply(text: str) -> tuple[str, str]:
         text = text[match.end():]
     text = re.sub(r"[*_`#]+", "", text or "")            # markdown the model added anyway
     text = re.sub(r"\[(\w+)\]", "", text)                 # stray mood tags
+    text = re.sub(r"</?remind[^>]*>", "", text)           # a broken reminder tag
     text = re.sub(r"\s+", " ", text).strip().strip('"').strip()
     if len(text) > MAX_REPLY_CHARS:
         cut = text[:MAX_REPLY_CHARS]
@@ -204,6 +215,7 @@ class ChatSession:
     path: Path | None = None
     today: Callable[[], date] = date.today
     history: list[dict] = field(default_factory=list)
+    last_reminders: list[tuple[str, str]] = field(default_factory=list, init=False, repr=False)
     _day: date | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -256,9 +268,11 @@ class ChatSession:
             raw = data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError):
             raise ChatError("server", "unexpected reply") from None
+        raw, self.last_reminders = extract_reminders(raw)
         mood, reply = parse_reply(raw)
+        noted = "".join(f' <remind when="{when}">{what}</remind>' for when, what in self.last_reminders)
         self.history += [{"role": "user", "content": user_text},
-                         {"role": "assistant", "content": f"[{mood}] {reply}"}]
+                         {"role": "assistant", "content": f"[{mood}] {reply}{noted}"}]
         self._save()
         return mood, reply
 

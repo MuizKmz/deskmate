@@ -30,7 +30,8 @@ dozes off when you leave, pouts when you ignore her, and reminds you to drink wa
 | 🪂 **Has gravity** | Drop her in mid-air and she falls to the taskbar with a squash. Fling her and she flies, bounces off the screen edges and lands ("Ow ow ow..."). |
 | 😴 **Lives with your day** | Gets sleepy when you step away, falls asleep, and wakes up when you come back. Sleepy late at night too. |
 | 😤 **Has feelings** | Pouts if you work for ages without saying hi. One pat and she forgives you. |
-| 💧 **Takes care of you** | Gentle reminders to drink water and take a stretch break (can be switched off). |
+| 💧 **Takes care of you** | Gentle reminders to drink water, stretch, and go to bed when you work past 11 pm (can be switched off). |
+| ⏰ **Reminds you** | "Remind me at 3pm about the meeting": ask in chat or add one from her menu, and she tells you on time. |
 | 💬 **Talks** | Speech bubbles with a typing effect, from her own lines in `character.json`. |
 | 🧠 **Chats with you** | Type to her and she answers in character, powered by OpenAI or a free local model (Ollama). Remembers your day. |
 | 🛡️ **Hard to break** | One copy at a time, safe settings saves, never gets lost off-screen, logs every error, and still starts if images are missing. |
@@ -59,7 +60,7 @@ Double-click **`run_deskmate.bat`**. The first time, it sets itself up (about 1�
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 71 self-tests
+run_deskmate.bat --test        # run the 85 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -85,7 +86,7 @@ python -m venv .venv
 | **Right-click** her (or the tray icon) | The menu ⬇️ |
 | Click the **tray icon** | Hide / show her |
 
-**Menu:** Chat with Yuki · Talk to me · Take a walk · Go to sleep / Wake up · Character · Size (small / medium / large) · Always on top · Gravity · Wander around · Chit-chat now and then · Care reminders · Start with Windows · Move back to the corner · Chat settings · Forget today's chat · Open settings & logs folder · Quit
+**Menu:** Chat with Yuki · Talk to me · Take a walk · Go to sleep / Wake up · Reminders · Character · Size (small / medium / large) · Always on top · Gravity · Wander around · Chit-chat now and then · Care reminders · Start with Windows · Move back to the corner · Chat settings · Forget today's chat · Open settings & logs folder · Quit
 
 > Want her to stay exactly where you put her (say, mid-screen)? Untick **Gravity**.
 
@@ -113,6 +114,18 @@ The first time, the **Chat settings** box opens. Pick her "chat brain":
 
 > [!IMPORTANT]
 > Your key is saved only on your PC, in `%APPDATA%\DeskMate\secrets.json`, never in this folder, so it can't end up on GitHub. Set a monthly spending limit on your OpenAI account to be safe. You can also use the `OPENAI_API_KEY` environment variable instead.
+
+### ⏰ Reminders
+
+Ask her in chat: *"remind me at 3pm about the meeting"*, *"remind me in 20 minutes to stretch"*. Or, without any AI, right-click → **Reminders** → **Add reminder...** and type:
+
+| You type | She reminds you |
+|---|---|
+| `15:00 meeting` · `3pm call mom` · `9am standup` | at that time (tomorrow if it has passed today) |
+| `in 20 min stretch` · `20m tea` · `1h30 check the oven` | that long from now |
+| `submit report at 3:30 pm` · `call mom in 2 hours` | the time can go at the end too |
+
+When it's time she hops up and tells you. **Reminders** in her menu lists what's coming, and you can cancel any of them. Reminders are saved, so they survive a restart, and if one came due while DeskMate was closed, she tells you when she starts.
 
 ---
 
@@ -218,7 +231,7 @@ tools/make_blink.py          makes a blink picture from idle + sleep
 tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
-tests/                       71 tests (python -m unittest)
+tests/                       85 tests (python -m unittest)
 packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno Setup)
 .github/workflows/           tests on every push; a tagged push builds and publishes a release
 ```

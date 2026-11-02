@@ -182,6 +182,7 @@ class Controller:
     """Owns the windows and menus, and passes events between them and the brain."""
 
     TICK_MS = 250
+    MISSED_DELAY_MS = 6000  # mention missed reminders after her hello
 
     def __init__(self, app, settings, pack, frames, brain, idle):
         from PySide6.QtCore import QTimer
@@ -204,6 +205,9 @@ class Controller:
         self._chat_box = None
         self._chat_worker = None
         self.chat = self._make_chat()
+        from .reminders import ReminderBook
+
+        self.reminders = ReminderBook(data_dir() / "reminders.json")
 
         self.companion.clicked.connect(self._on_click)
         self.companion.dragStarted.connect(lambda: self._event(self.brain.on_drag_start))
@@ -248,6 +252,13 @@ class Controller:
             self.brain.on_start(now)
         self._tick_timer.start(self.TICK_MS)
         self._apply(now)
+        missed = self.reminders.pop_missed()
+        if missed:
+            from PySide6.QtCore import QTimer
+
+            what = ", ".join(r.text for r in missed[:3]) + (" ..." if len(missed) > 3 else "")
+            QTimer.singleShot(self.MISSED_DELAY_MS, lambda: self._event(
+                lambda t: self.brain.on_reminder(t, what, missed=True)))
 
     # ------------------------------------------------------------------ loop
     def _tick(self) -> None:
@@ -256,6 +267,7 @@ class Controller:
             self.brain.tick(now, self.idle.seconds())
         except Exception:  # never let one bad tick kill her; it's logged
             log.exception("Brain tick failed")
+        self._check_reminders(now)
         self._apply(now)
 
     def _apply(self, now: float) -> None:
@@ -370,6 +382,7 @@ class Controller:
             key = "ollama_model" if self.chat.config.provider == "ollama" else "chat_model"
             if not self.settings[key] and self.chat.config.model:
                 self._set(key, self.chat.config.model)  # remember the model that was picked for you
+            self._reminders_from_chat(now)
         else:
             kind = value.kind if isinstance(value, ChatError) else "server"
             log.warning("Chat failed (%s): %s", kind, getattr(value, "detail", value))
@@ -377,6 +390,96 @@ class Controller:
         self.bubble.dismiss()
         self.brain.on_chat_reply(now, mood, reply)
         self._apply(now)
+
+    # ------------------------------------------------------------- reminders
+    def _check_reminders(self, now: float) -> None:
+        due = self.reminders.pop_due()
+        if not due:
+            return
+        what = ", ".join(r.text for r in due)
+        log.info("Reminder due: %s", what)
+        self.brain.on_reminder(now, what)
+        if self.tray is not None and (not self.companion.isVisible() or not self.settings["always_on_top"]):
+            self.tray.showMessage(f"{self.pack.name} reminds you", what)
+
+    def _reminders_from_chat(self, now: float) -> None:
+        from datetime import datetime
+
+        from .reminders import parse_when
+
+        for when, what in self.chat.last_reminders:
+            due = parse_when(when, datetime.now())
+            reminder = self.reminders.add(due, what) if due else None
+            if reminder is None:
+                log.warning("Chat asked for a reminder I couldn't understand: %r %r", when, what)
+                self.brain.say(now, "Hmm, I couldn't catch the time for that reminder... "
+                                    "could you add it from Reminders in my menu?", "pouty")
+            else:
+                log.info("Reminder set from chat: %s", reminder.label(datetime.now()))
+
+    def add_reminder_from_text(self, text: str) -> bool:
+        """'15:00 meeting', 'in 20 min stretch', 'call mom at 3pm'. Returns False if the time wasn't understood."""
+        from datetime import datetime
+
+        from .reminders import parse_request
+
+        now_dt = datetime.now()
+        parsed = parse_request(text, now_dt)
+        reminder = self.reminders.add(*parsed) if parsed else None
+        if reminder is None:
+            return False
+        when = reminder.label(now_dt).rsplit("  ", 1)[0]
+        self._event(lambda now: self.brain.on_reminder_set(now, when))
+        return True
+
+    def ask_for_reminder(self) -> None:
+        """Menu: Reminders > Add reminder..."""
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QInputDialog, QLineEdit
+
+        hint = "When, and what?\n\nExamples:   15:00 meeting   ·   in 20 min stretch   ·   call mom at 3pm"
+        text = ""
+        while True:
+            dialog = QInputDialog()
+            dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+            dialog.setWindowTitle(f"{self.pack.name}: add a reminder")
+            dialog.setLabelText(hint)
+            dialog.setTextEchoMode(QLineEdit.EchoMode.Normal)
+            dialog.setTextValue(text)
+            dialog.resize(420, dialog.sizeHint().height())
+            if dialog.exec() != QInputDialog.DialogCode.Accepted or not dialog.textValue().strip():
+                return
+            text = dialog.textValue()
+            if self.add_reminder_from_text(text):
+                return
+            hint = "Hmm, I didn't understand the time. Try like:   15:00 meeting   ·   in 20 min tea   ·   9am standup"
+
+    def _cancel_reminder(self, reminder_id: str, _checked: bool = False) -> None:
+        if self.reminders.cancel(reminder_id):
+            self._event(lambda now: self.brain.say(now, "Okay, I won't remind you about that.", "talk"))
+
+    def _fill_reminders_menu(self) -> None:
+        from datetime import datetime
+
+        from PySide6.QtGui import QAction
+
+        menu = self.reminders_menu
+        menu.clear()
+        add = QAction("Add reminder...", menu)
+        add.triggered.connect(self.ask_for_reminder)
+        menu.addAction(add)
+        menu.addSeparator()
+        upcoming = self.reminders.upcoming()
+        if not upcoming:
+            empty = QAction("No reminders yet (or ask me in chat!)", menu)
+            empty.setEnabled(False)
+            menu.addAction(empty)
+        now = datetime.now()
+        for reminder in upcoming:
+            sub = menu.addMenu(reminder.label(now))
+            cancel = QAction("Cancel this reminder", sub)
+            cancel.triggered.connect(functools.partial(self._cancel_reminder, reminder.id))
+            sub.addAction(cancel)
 
     def open_chat_settings(self) -> bool:
         """Menu: the Chat settings dialog. Returns True if saved."""
@@ -458,6 +561,8 @@ class Controller:
         self.act_chat = action(f"Chat with {name}...", self.open_chat)
         self.act_walk = action("Take a walk", self.take_walk)
         self.act_sleep = action("Go to sleep", self._toggle_sleep)
+        self.reminders_menu = menu.addMenu("Reminders")
+        self._fill_reminders_menu()
         menu.addSeparator()
 
         self.character_menu = menu.addMenu("Character")
@@ -549,6 +654,7 @@ class Controller:
         from . import autostart
 
         self._fill_character_menu()
+        self._fill_reminders_menu()
         self.act_toggle.setText(f"Hide {self.pack.name}" if self.companion.isVisible() else f"Show {self.pack.name}")
         self.act_chat.setText(f"Chat with {self.pack.name}...")
         self.act_sleep.setText("Wake up" if self.brain.asleep else "Go to sleep")

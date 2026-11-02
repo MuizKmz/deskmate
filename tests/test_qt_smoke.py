@@ -348,6 +348,71 @@ class QtSmokeTests(unittest.TestCase):
             controller._on_about_to_quit()
             controller.companion.close()
 
+    def test_reminders_from_the_menu_from_chat_and_missed_ones(self):
+        import json
+        import random
+        from datetime import datetime, timedelta
+        from unittest import mock
+
+        from deskmate.app import Controller
+        from deskmate.brain import Brain
+        from deskmate.character import load_pack
+        from deskmate.companion import load_frames
+        from deskmate.settings import Settings
+        from tests.fake_openai import FakeOpenAI
+
+        fake = FakeOpenAI()
+        self.addCleanup(fake.close)
+        with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
+            missed_at = (datetime.now() - timedelta(minutes=30)).replace(microsecond=0).isoformat()
+            (Path(home) / "reminders.json").write_text(json.dumps(
+                {"reminders": [{"id": "old1", "due": missed_at, "text": "water the plants"}]}), encoding="utf-8")
+            settings = Settings(Path(home) / "settings.json")
+            pack = load_pack(self.root)
+            lines = dict(pack.lines, reminder=["Time: {what}!"], reminder_missed=["Missed: {what}"],
+                         reminder_set=["Set for {time}"])
+            brain = Brain(lines, now=time.monotonic(), rng=random.Random(5))
+            controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
+            controller.MISSED_DELAY_MS = 0
+            controller.start()
+            spin(0.3)
+            self.assertEqual(controller.bubble.text, "Missed: water the plants")
+
+            # Menu: Reminders > Add reminder...
+            self.assertFalse(controller.add_reminder_from_text("sometime later"))
+            self.assertTrue(controller.add_reminder_from_text("in 20 min stretch"))
+            self.assertTrue(controller.bubble.text.startswith("Set for "))
+            controller._fill_reminders_menu()
+            labels = [a.text() for a in controller.reminders_menu.actions()]
+            self.assertEqual(labels[0], "Add reminder...")
+            self.assertTrue(labels[-1].endswith("stretch"), labels)
+
+            # It comes due: she says it.
+            reminder = controller.reminders.items[0]
+            reminder.due = (datetime.now() - timedelta(seconds=1)).replace(microsecond=0).isoformat()
+            controller._tick()
+            self.assertEqual(controller.bubble.text, "Time: stretch!")
+            self.assertEqual(controller.reminders.upcoming(), [])
+
+            # From chat: the model adds a tag, the app sets the reminder.
+            controller.chat.config.api_key = fake.key
+            controller.chat.config.base_url = fake.url
+            controller.chat.config.model = "gpt-5.4-mini"
+            fake.reply = '[happy] Okay~ <remind when="in 45 min">call mom</remind>'
+            controller.open_chat()
+            controller._on_chat_sent("remind me to call mom in 45 minutes")
+            deadline = time.monotonic() + 10
+            while not controller.reminders.upcoming() and time.monotonic() < deadline:
+                spin(0.05)
+            self.assertEqual([r.text for r in controller.reminders.upcoming()], ["call mom"])
+            self.assertEqual(controller.bubble.text, "Okay~")
+            controller._cancel_reminder(controller.reminders.upcoming()[0].id)
+            self.assertEqual(controller.reminders.upcoming(), [])
+            self.assertEqual(json.loads((Path(home) / "reminders.json").read_text())["reminders"], [])
+            controller._chat_box.hide()
+            controller._on_about_to_quit()
+            controller.companion.close()
+
     def test_whole_app_wiring(self):
         import logging
         import random
@@ -366,7 +431,9 @@ class QtSmokeTests(unittest.TestCase):
         os.environ["DESKMATE_CHARACTERS"] = str(self.root.parent)
         self.addCleanup(os.environ.pop, "DESKMATE_CHARACTERS", None)
 
-        with tempfile.TemporaryDirectory() as home:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
             settings = Settings(Path(home) / "settings.json")
             pack = load_pack(self.root)
             brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(3))

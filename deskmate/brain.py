@@ -38,6 +38,8 @@ WANDER_MIN, WANDER_MAX = 45, 140  # she strolls along the taskbar now and then
 WANDER_LINE_CHANCE = 0.25
 BIG_FALL = 1500.0  # landing speed (px/s) that earns an "ouch"
 LATE_HOURS = range(0, 5)  # midnight to 5 am counts as "late"
+BEDTIME_FROM = 23  # from 11 pm, if you're still working, she nudges you to sleep...
+BEDTIME_EVERY = 45 * 60  # ...every 45 minutes
 
 LABELS = {
     "idle": "chilling",
@@ -96,6 +98,7 @@ class Brain:
         self._next_chatter = now + self.rng.uniform(CHATTER_MIN, CHATTER_MAX)
         self._next_wander = now + self.rng.uniform(WANDER_MIN, WANDER_MAX)
         self._late_day = None
+        self._last_bedtime = -1e9
         self._speech_until = -1e9
         self._chatting_until = -1e9  # quiet time while you're chatting with her
         self._speech: list[Speech] = []
@@ -130,6 +133,22 @@ class Brain:
 
     def _speaking(self, now: float) -> bool:
         return now < self._speech_until
+
+    def _say_text(self, text: str, now: float, expression: str, duration: float | None = None) -> None:
+        duration = duration or speech_duration(text)
+        self._speech.append(Speech(text, duration))
+        self._speech_until = now + duration
+        self._react(expression, now, duration)
+
+    def _line(self, key: str, **values: str) -> str | None:
+        """A random line from group ``key`` with {placeholders} filled in."""
+        options = self.lines.get(key) or []
+        if not options:
+            return None
+        line = self.rng.choice(options)
+        for name, value in values.items():
+            line = line.replace("{" + name + "}", value)
+        return line
 
     def _say(self, key: str, now: float, expression: str | None = None) -> bool:
         """Queue a random line from group ``key``. The face matches while she talks."""
@@ -238,6 +257,27 @@ class Brain:
         if not self._speaking(now) and self._say("wander", now, "happy"):
             return
         self._react("happy", now, 1.5)
+
+    # --------------------------------------------------------------- reminders
+    def on_reminder(self, now: float, what: str, missed: bool = False) -> None:
+        """A reminder is due: wake up, hop, and tell the user (the bubble stays up a bit longer)."""
+        if self.base == "sleep" or self.manual_sleep:
+            self._wake(now, quiet=True)
+        if self.base in ("pouty", "sleepy"):
+            self.base = "idle"
+        self.last_interaction = now
+        text = self._line("reminder_missed" if missed else "reminder", what=what) or what
+        self._animations.append("hop")
+        self._say_text(text, now, "surprised" if not missed else "talk", max(6.0, speech_duration(text) + 2.0))
+
+    def say(self, now: float, text: str, expression: str = "talk") -> None:
+        """Say a fixed sentence (for app messages that aren't in her lines)."""
+        self._say_text(text, now, expression)
+
+    def on_reminder_set(self, now: float, time_text: str) -> None:
+        text = self._line("reminder_set", time=time_text)
+        if text:
+            self._say_text(text, now, "happy")
 
     # -------------------------------------------------------------------- chat
     def on_chat_sent(self, now: float) -> None:
@@ -370,6 +410,13 @@ class Brain:
             elif now - self._active_since >= BREAK_AFTER:
                 self._active_since = now
                 self._say("break", now)
+
+        # Still working late at night? A gentle "go to bed" now and then.
+        hour = self.wallclock().hour
+        if (self.reminders and awake and user_active and not chatting and not self._speaking(now)
+                and (hour >= BEDTIME_FROM or hour in LATE_HOURS) and now - self._last_bedtime >= BEDTIME_EVERY):
+            self._last_bedtime = now
+            self._say("bedtime", now, "sleepy")
 
         # Random chit-chat.
         if self.chatty and self.base == "idle" and user_active and not chatting and now >= self._next_chatter:

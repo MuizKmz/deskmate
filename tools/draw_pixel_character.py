@@ -181,6 +181,10 @@ LINES = {
     "ignored": ["Hmph... 45 minutes and not a single pat?"],
     "fall": ["Waaah— *thud*", "8-bit landing!"],
     "wander": ["*boop boop* walking~"],
+    "reminder": ["DING DING! Time for: {what}!", "Quest alert: {what}!"],
+    "reminder_missed": ["You missed a quest while I was offline: {what}"],
+    "reminder_set": ["Quest saved for {time}!"],
+    "bedtime": ["Night mode time! Save your progress and sleep~", "It's late, player one. Bedtime!"],
 }
 
 

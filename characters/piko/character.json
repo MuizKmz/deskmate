@@ -43,6 +43,20 @@
     ],
     "wander": [
       "*boop boop* walking~"
+    ],
+    "reminder": [
+      "DING DING! Time for: {what}!",
+      "Quest alert: {what}!"
+    ],
+    "reminder_missed": [
+      "You missed a quest while I was offline: {what}"
+    ],
+    "reminder_set": [
+      "Quest saved for {time}!"
+    ],
+    "bedtime": [
+      "Night mode time! Save your progress and sleep~",
+      "It's late, player one. Bedtime!"
     ]
   },
   "persona": "You are a cheerful little pixel-art girl with headphones. You love games, music and cheering the user on, and you talk with lots of energy, like a friendly gamer buddy."

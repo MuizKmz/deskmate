@@ -80,6 +80,18 @@ class ServerTests(unittest.TestCase):
         self.assertEqual([m["content"] for m in self.fake.requests[-1]["messages"][1:3]],
                          ["hello", "[happy] Ehehe, hi there~"])
 
+    def test_reminder_tags_are_taken_out_of_the_reply(self):
+        self.fake.reply = '[happy] Okay~ I\'ll tell you at 3! <remind when="3pm">the meeting</remind>'
+        session = self.session()
+        self.assertEqual(session.ask("remind me at 3pm about the meeting"), ("happy", "Okay~ I'll tell you at 3!"))
+        self.assertEqual(session.last_reminders, [("3pm", "the meeting")])
+        self.assertIn('<remind when="3pm">', session.history[-1]["content"])  # so she knows it's set
+        self.assertIn("<remind", C.persona_prompt({}, "Yuki"))  # the real prompt tells her how
+        self.fake.reply = "[talk] Nothing to remind."
+        session.ask("hi")
+        self.assertEqual(session.last_reminders, [])
+        self.assertEqual(C.parse_reply('[happy] ok <remind when="3pm">cut off'), ("happy", "ok cut off"))
+
     def test_she_remembers_today_but_not_yesterday(self):
         self.session().ask("my meeting is at 3")
         again = self.session()  # e.g. after a restart

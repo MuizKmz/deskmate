@@ -58,6 +58,10 @@ DEFAULT_LINES: dict[str, list[str]] = {
     "water": ["Drink some water, okay?"],
     "break": ["You've been working for a long time. Stretch a little?"],
     "random": ["What are you working on?", "I'm right here if you need me."],
+    "reminder": ["Hey! It's time: {what}!"],
+    "reminder_missed": ["While I was off, you had a reminder: {what}"],
+    "reminder_set": ["Okay! I'll remind you at {time}."],
+    "bedtime": ["It's getting late... time for bed soon?"],
 }
 
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
