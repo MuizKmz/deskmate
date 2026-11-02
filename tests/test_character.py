@@ -140,10 +140,11 @@ class CharacterTests(unittest.TestCase):
                 mock.patch.dict("os.environ", {"DESKMATE_HOME": str(self.root / "home")}):
             import os
             os.environ.pop("DESKMATE_CHARACTERS", None)
-            self.assertEqual(paths.characters_dir(), bundle / "characters")
-            self.assertEqual(paths.character_dirs()[1], self.root / "home" / "characters")
+            same = lambda a, b: self.assertEqual(Path(a).resolve(), Path(b).resolve())  # Windows: RUNNER~1 == runneradmin
+            same(paths.characters_dir(), bundle / "characters")
+            same(paths.character_dirs()[1], self.root / "home" / "characters")
             (exe.parent / "characters").mkdir()  # a portable copy with characters beside the exe
-            self.assertEqual(paths.characters_dir(), exe.parent / "characters")
+            same(paths.characters_dir(), exe.parent / "characters")
 
 
 if __name__ == "__main__":

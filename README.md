@@ -6,14 +6,15 @@
 She strolls along your taskbar, reacts when you pat her, tumbles if you drop her,<br>
 dozes off when you leave, pouts when you ignore her, and reminds you to drink water.
 
-![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![Qt](https://img.shields.io/badge/PySide6-Qt_6-41CD52?style=for-the-badge&logo=qt&logoColor=white)
+[![Download](https://img.shields.io/github/v/release/MuizKmz/deskmate?style=for-the-badge&label=download&color=C9A0DC)](https://github.com/MuizKmz/deskmate/releases/latest)
 ![Windows](https://img.shields.io/badge/Windows-10_/_11-0078D4?style=for-the-badge&logo=windows&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-68_passing-2ea44f?style=for-the-badge)
+![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Qt](https://img.shields.io/badge/PySide6-Qt_6-41CD52?style=for-the-badge&logo=qt&logoColor=white)
+[![Tests](https://img.shields.io/github/actions/workflow/status/MuizKmz/deskmate/ci.yml?branch=main&style=for-the-badge&label=tests)](https://github.com/MuizKmz/deskmate/actions/workflows/ci.yml)
 
 <img src="docs/demo.gif" alt="Yuki on the desktop: blinking, patted, strolling along the taskbar, flung across the screen, talking, then falling asleep" width="640">
 
-[**Start**](#-start-in-one-double-click) · [**Play with her**](#-play-with-her) · [**Chat**](#-chat-with-her) · [**Moods**](#-her-moods) · [**Characters**](#-characters) · [**📖 How it works**](TUTORIAL.md)
+[**Install**](#-install) · [**Play with her**](#-play-with-her) · [**Chat**](#-chat-with-her) · [**Moods**](#-her-moods) · [**Characters**](#-characters) · [**📖 How it works**](TUTORIAL.md)
 
 </div>
 
@@ -36,24 +37,29 @@ dozes off when you leave, pouts when you ignore her, and reminds you to drink wa
 
 ---
 
-## 🚀 Start in one double-click
+## 🚀 Install
 
-> **Needs:** Windows 10/11 and [Python 3.9+](https://www.python.org/downloads/) (tick *"Add python.exe to PATH"* when installing).
-
-1. Double-click **`run_deskmate.bat`**.
-2. The first time, it sets itself up (about 1–2 minutes, it installs PySide6 into a private `.venv` folder).
+1. Download **`DeskMate-Setup-x.y.z.exe`** from the [latest release](https://github.com/MuizKmz/deskmate/releases/latest). No Python needed.
+2. Run it. It installs just for you (no admin password) and can start DeskMate with Windows.
 3. She appears in the bottom-right corner and says hi. 👋
 
 <img src="docs/preview.png" alt="Yuki standing on the taskbar, introducing herself in a speech bubble" width="640">
 
-After that it starts instantly. To start her with Windows, right-click her → **Start with Windows**.
+> [!NOTE]
+> Windows may say **"Windows protected your PC"**, because the app isn't code-signed (signing costs money every year). Click **More info** → **Run anyway**. Every release lists SHA-256 checksums if you want to verify the download.
+
+Prefer no installer? Take **`DeskMate-x.y.z-portable.zip`**, unzip it anywhere and run `DeskMate.exe`. Updating is the same: install the new version over the old one. Your settings, chat history and API key stay in `%APPDATA%\DeskMate`.
 
 <details>
-<summary>Other ways to run it</summary>
+<summary>Run it from the source code instead (to tinker with it)</summary>
+
+> **Needs:** [Python 3.10+](https://www.python.org/downloads/) (tick *"Add python.exe to PATH"* when installing).
+
+Double-click **`run_deskmate.bat`**. The first time, it sets itself up (about 1–2 minutes, it installs PySide6 into a private `.venv` folder).
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 68 self-tests
+run_deskmate.bat --test        # run the 70 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -156,6 +162,7 @@ characters/
 - Every picture should be the same size, with her feet at the bottom centre.
 - Pixel art? Add `"smooth": false` to `character.json` and she stays crisp.
 - Check a pack: `.venv\Scripts\python -m deskmate --check characters\yuki`
+- Installed DeskMate? Put your own character folders in `%APPDATA%\DeskMate\characters`. They show up in the menu, survive updates, and a folder with the same name as a built-in one replaces it.
 
 **Got pictures with a white background?** The clean-up tool does everything for you: it cuts her out with an anime-trained AI model, removes the white fringe, lines every expression up with idle, and writes the pack:
 
@@ -211,8 +218,23 @@ tools/make_blink.py          makes a blink picture from idle + sleep
 tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
-tests/                       68 tests (python -m unittest)
+tests/                       70 tests (python -m unittest)
+packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno Setup)
+.github/workflows/           tests on every push; a tagged push builds and publishes a release
 ```
+
+<details>
+<summary>Make a release</summary>
+
+Bump `__version__` in `deskmate/__init__.py`, commit, then:
+
+```powershell
+git tag v0.3.0
+git push origin v0.3.0
+```
+
+GitHub Actions runs the tests on Windows, builds `DeskMate.exe`, makes the installer and the portable zip, and publishes them on the Releases page. To build locally instead: `pip install pyinstaller`, `pyinstaller packaging\deskmate.spec`, then compile `packaging\installer.iss` with [Inno Setup](https://jrsoftware.org/isinfo.php).
+</details>
 
 ## 🛣️ Next phases
 

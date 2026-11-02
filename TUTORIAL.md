@@ -5,7 +5,7 @@
 ### A guided tour: see-through windows, animation, a testable "brain", and the habits that make an app robust
 
 ![Level](https://img.shields.io/badge/level-intermediate-blueviolet?style=flat-square)
-![Time](https://img.shields.io/badge/time-~2_hours-orange?style=flat-square)
+![Time](https://img.shields.io/badge/time-~2.5_hours-orange?style=flat-square)
 
 [← Back to README](README.md)
 
@@ -28,7 +28,8 @@
 | 7 | [Character packs](#7---character-packs) | `character.py`, `tools/` | Validating input, and how the image clean-up works |
 | 8 | [Bringing her to life](#8---bringing-her-to-life) | `companion.py`, `brain.py` | Blinking, gravity, throwing, wandering, frame-rate-proof physics |
 | 9 | [Talking with AI](#9---talking-with-ai) | `chat.py`, `chatbox.py` | One API for OpenAI and Ollama, threads, prompts, testing with a fake server |
-| 10 | [Your turn](#10---your-turn) | | Challenges with hints |
+| 10 | [Shipping it](#10---shipping-it) | `packaging/`, `.github/workflows/` | PyInstaller, an installer, and CI/CD with GitHub Actions |
+| 11 | [Your turn](#11---your-turn) | | Challenges with hints |
 
 ---
 
@@ -352,7 +353,68 @@ Edit `"persona"` in `characters/yuki/character.json` (say, make her talk like a 
 
 ---
 
-## 10 · 🏆 Your turn
+## 10 · 📦 Shipping it
+
+Running from source needs Python. Real users want a download that just works. Three tools turn the code into that, and GitHub runs them for you.
+
+```mermaid
+flowchart LR
+    T["git push origin v0.3.0"] --> GA[GitHub Actions<br/>Windows machine]
+    GA --> TS[Run the 70 tests]
+    TS --> PI["PyInstaller<br/>DeskMate.exe + _internal"]
+    PI --> CK["DeskMate.exe --check"]
+    CK --> IS[Inno Setup<br/>installer]
+    CK --> ZIP[Portable zip]
+    IS --> R[GitHub Release]
+    ZIP --> R
+```
+
+### 1. PyInstaller: Python into an .exe
+
+`packaging/deskmate.spec` is the recipe. PyInstaller follows every `import`, copies Python itself, PySide6 and the `characters/` folder, and writes `DeskMate.exe`.
+
+| Choice | Why |
+|---|---|
+| **onedir** (an exe + `_internal` folder), not onefile | A single-file exe unpacks itself to a temp folder on *every* launch: slower, and antivirus tools dislike it |
+| `console=False` | No black window behind her |
+| `upx=False` | Compressed exes look suspicious to antivirus software |
+| Drop Qt translations and `opengl32sw.dll` | About 25 MB she never uses |
+| `hiddenimports=["deskmate.chat", ...]` | Those are imported *inside functions*, which PyInstaller can't see |
+
+The classic packaging bug: files aren't where the code expects. Inside the exe, `__file__` points somewhere odd, so `paths.py` asks `sys.frozen` and `sys._MEIPASS` where the bundled files really are. `test_packaged_app_finds_its_bundled_characters` pretends to be frozen to test exactly that.
+
+### 2. Inno Setup: the installer
+
+`packaging/installer.iss` makes `DeskMate-Setup-0.3.0.exe`:
+
+- `PrivilegesRequired=lowest`: installs into your own `%LOCALAPPDATA%\Programs`, so **no admin prompt**.
+- The fixed `AppId` is how Windows knows 0.4.0 is an *upgrade* of 0.3.0, not a second app.
+- `CloseApplications=yes` closes a running DeskMate before replacing files (Windows can't overwrite a running exe).
+- The uninstaller removes the "Start with Windows" entry, but keeps `%APPDATA%\DeskMate` (your settings and key).
+
+### 3. GitHub Actions: CI/CD
+
+Two workflow files in `.github/workflows/`:
+
+| File | When | What |
+|---|---|---|
+| `ci.yml` | every push and pull request | tests on Windows (Python 3.10 and 3.13) and Linux, then a test build of the exe |
+| `release.yml` | when you push a tag like `v0.3.0` | tests, build, `--check`, zip, installer, checksums, GitHub Release |
+
+**CI** (continuous integration) means every change is tested on clean machines, so "works on my PC" isn't enough. **CD** (continuous delivery) means releasing is one command, done the same way every time. The release job also refuses to run if the tag doesn't match `__version__`, a small guard against a very common mistake.
+
+> [!TIP]
+> Read `release.yml` top to bottom: it's just the steps you'd do by hand, written down. That's most of what DevOps automation is.
+
+<details>
+<summary>🧪 <b>Experiment</b></summary>
+
+Break a test on purpose (say, change an expected value in `tests/test_chat.py`), push, and watch the **Actions** tab on GitHub turn red, with the exact failing line. Then fix it and watch it go green.
+</details>
+
+---
+
+## 11 · 🏆 Your turn
 
 ### 🟢 A waving animation
 Make her wave when you come back to your PC.
@@ -380,6 +442,13 @@ When you come back after being away, she walks over to stand under your mouse.
 <details><summary>💡 Hint</summary>
 
 The brain knows when you return (`_wake`): queue a new animation such as `"come"`. In `app.py`'s `_apply`, turn it into `companion.start_wander(target_x=...)` using `QCursor.pos().x()`. `target_x` is the *window's* x, so subtract half her window width. Write the brain test first.
+</details>
+
+### 🟡 Auto-update check
+When a new release is out, she tells you ("A new me is available~").
+<details><summary>💡 Hint</summary>
+
+Once a day, on a background thread (like the chat), fetch `https://api.github.com/repos/MuizKmz/deskmate/releases/latest`, compare its `tag_name` with `__version__`, and if it's newer, queue a speech line and add a menu item that opens the release page with `QDesktopServices.openUrl`.
 </details>
 
 ### 🔴 Claude as a third brain

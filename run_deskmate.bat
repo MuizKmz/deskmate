@@ -47,7 +47,7 @@ exit /b 0
 
 :no_python
 echo.
-echo Python 3.9 or newer was not found.
+echo Python 3.10 or newer was not found.
 echo Install it from https://www.python.org/downloads/
 echo (tick "Add python.exe to PATH" during setup), then run this file again.
 echo.
