@@ -6,6 +6,7 @@ __pycache__/
 build/
 dist/
 *.spec
+!packaging/deskmate.spec
 
 # Raw source pictures dropped in the project root stay on your computer.
 # (The app only uses the cleaned copies in characters/ and the pictures in docs/.)
