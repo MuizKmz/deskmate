@@ -399,7 +399,7 @@ Two workflow files in `.github/workflows/`:
 | File | When | What |
 |---|---|---|
 | `ci.yml` | every push and pull request | tests on Windows (Python 3.10 and 3.13) and Linux, then a test build of the exe |
-| `release.yml` | when you push a tag like `v0.3.0` | tests, build, `--check`, zip, installer, checksums, GitHub Release |
+| `release.yml` | the **Run workflow** button, or pushing a tag like `v0.3.0` | tests, build, `--check`, zip, installer, checksums, GitHub Release |
 
 **CI** (continuous integration) means every change is tested on clean machines, so "works on my PC" isn't enough. **CD** (continuous delivery) means releasing is one command, done the same way every time. The release job also refuses to run if the tag doesn't match `__version__`, a small guard against a very common mistake.
 

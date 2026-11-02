@@ -1,11 +1,13 @@
-# Push a tag like v0.3.0 and this builds DeskMate.exe, the installer and a portable zip,
-# then publishes them as a GitHub Release.
-#     git tag v0.3.0 && git push origin v0.3.0
+# Builds DeskMate.exe, the installer and a portable zip, then publishes them as a GitHub Release.
+# Two ways to start it:
+#   * GitHub website: Actions > Release > Run workflow   (uses the version in deskmate/__init__.py)
+#   * or push a tag:   git tag v0.3.0 && git push origin v0.3.0
 name: Release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -25,15 +27,16 @@ jobs:
           python-version: "3.13"
           cache: pip
 
-      - name: Version must match the tag
+      - name: Version (must match the tag)
         id: version
         shell: pwsh
         run: |
           $version = (Select-String -Path deskmate\__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
-          if ("v$version" -ne "${{ github.ref_name }}") {
+          if ("${{ github.ref_type }}" -eq "tag" -and "v$version" -ne "${{ github.ref_name }}") {
             Write-Error "Tag ${{ github.ref_name }} doesn't match __version__ $version in deskmate/__init__.py"; exit 1
           }
           "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
 
       - name: Install
         run: python -m pip install -r requirements.txt "pyinstaller>=6,<7"
@@ -82,6 +85,14 @@ jobs:
           Windows may show "Windows protected your PC" because the app isn't code-signed yet: click **More info** then **Run anyway**.
           Your settings, chat history and API key are kept in %APPDATA%\DeskMate across updates.
           "@
-          gh release create "${{ github.ref_name }}" `
-            "dist\DeskMate-Setup-$v.exe" "dist\DeskMate-$v-portable.zip" dist\SHA256SUMS.txt `
-            --title "DeskMate $v" --notes $notes --generate-notes
+          $tag = "${{ steps.version.outputs.tag }}"
+          $files = "dist\DeskMate-Setup-$v.exe", "dist\DeskMate-$v-portable.zip", "dist\SHA256SUMS.txt"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            # The release already exists (e.g. made on the website): just attach the files.
+            gh release upload $tag @files --clobber
+          } else {
+            # Creates the tag too (at this commit) when it doesn't exist yet.
+            gh release create $tag @files --target "${{ github.sha }}" --title "DeskMate $v" --notes $notes --generate-notes
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

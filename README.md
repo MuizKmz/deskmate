@@ -226,12 +226,7 @@ packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno
 <details>
 <summary>Make a release</summary>
 
-Bump `__version__` in `deskmate/__init__.py`, commit, then:
-
-```powershell
-git tag v0.3.0
-git push origin v0.3.0
-```
+Bump `__version__` in `deskmate/__init__.py` and push. Then on GitHub: **Actions** → **Release** → **Run workflow**. (Or push a tag: `git tag v0.3.0` then `git push origin v0.3.0`.)
 
 GitHub Actions runs the tests on Windows, builds `DeskMate.exe`, makes the installer and the portable zip, and publishes them on the Releases page. To build locally instead: `pip install pyinstaller`, `pyinstaller packaging\deskmate.spec`, then compile `packaging\installer.iss` with [Inno Setup](https://jrsoftware.org/isinfo.php).
 </details>
