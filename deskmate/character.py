@@ -151,15 +151,20 @@ def _number(value, default: float, low: float, high: float) -> float:
 
 
 # --------------------------------------------------------------------------- loading
-def available_packs(characters_dir: Path) -> list[Path]:
-    if not Path(characters_dir).is_dir():
-        return []
-    return sorted(
-        p for p in Path(characters_dir).iterdir() if p.is_dir() and not p.name.startswith((".", "_"))
-    )
+def available_packs(characters_dir) -> list[Path]:
+    """Character folders in one folder or a list of folders (a later folder wins on the same name)."""
+    folders = [characters_dir] if isinstance(characters_dir, (str, Path)) else list(characters_dir)
+    found: dict[str, Path] = {}
+    for folder in folders:
+        folder = Path(folder)
+        if folder.is_dir():
+            for p in folder.iterdir():
+                if p.is_dir() and not p.name.startswith((".", "_")):
+                    found[p.name.lower()] = p
+    return sorted(found.values(), key=lambda p: p.name.lower())
 
 
-def find_pack(characters_dir: Path, wanted: str) -> Path | None:
+def find_pack(characters_dir, wanted: str) -> Path | None:
     """The wanted pack if it exists, otherwise the first one that has an idle image."""
     packs = available_packs(characters_dir)
     for pack in packs:

@@ -1,0 +1,73 @@
+# Runs the self-tests on Windows and Linux for every push and pull request,
+# and checks that the Windows app still builds (the build is kept for 14 days as a download).
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_QPA_PLATFORM: offscreen
+  PYTHONUTF8: "1"
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, python: "3.13" }
+          - { os: windows-latest, python: "3.10" }
+          - { os: ubuntu-latest, python: "3.13" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Qt system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - name: Install
+        run: python -m pip install -r requirements.txt
+      - name: Run the tests
+        run: python -m unittest discover -s tests -t . -v
+
+  build:
+    name: Windows app builds
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install
+        run: python -m pip install -r requirements.txt "pyinstaller>=6,<7"
+      - name: Build DeskMate.exe
+        run: pyinstaller packaging/deskmate.spec --noconfirm
+      - name: The built app finds its characters
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\DeskMate\DeskMate.exe -ArgumentList '--check' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Write-Error "DeskMate.exe --check failed ($($p.ExitCode))"; exit 1 }
+          "{0:N1} MB" -f ((Get-ChildItem dist\DeskMate -Recurse | Measure-Object Length -Sum).Sum / 1MB)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DeskMate-test-build
+          path: dist/DeskMate
+          retention-days: 14

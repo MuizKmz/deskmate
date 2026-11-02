@@ -1,0 +1,87 @@
+# Push a tag like v0.3.0 and this builds DeskMate.exe, the installer and a portable zip,
+# then publishes them as a GitHub Release.
+#     git tag v0.3.0 && git push origin v0.3.0
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  QT_QPA_PLATFORM: offscreen
+  PYTHONUTF8: "1"
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Version must match the tag
+        id: version
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path deskmate\__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            Write-Error "Tag ${{ github.ref_name }} doesn't match __version__ $version in deskmate/__init__.py"; exit 1
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Install
+        run: python -m pip install -r requirements.txt "pyinstaller>=6,<7"
+      - name: Run the tests
+        run: python -m unittest discover -s tests -t .
+
+      - name: Build DeskMate.exe
+        run: pyinstaller packaging/deskmate.spec --noconfirm
+      - name: The built app finds its characters
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\DeskMate\DeskMate.exe -ArgumentList '--check' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Write-Error "DeskMate.exe --check failed ($($p.ExitCode))"; exit 1 }
+
+      - name: Portable zip
+        shell: pwsh
+        run: Compress-Archive -Path dist\DeskMate -DestinationPath "dist\DeskMate-${{ steps.version.outputs.version }}-portable.zip"
+
+      - name: Installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          & $iscc "/DAppVersion=${{ steps.version.outputs.version }}" packaging\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem dist -File | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
+          } | Set-Content dist\SHA256SUMS.txt
+          Get-Content dist\SHA256SUMS.txt
+
+      - name: Publish the GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          $notes = @"
+          ## Install
+          - **DeskMate-Setup-$v.exe**: the installer (no admin needed). Recommended.
+          - **DeskMate-$v-portable.zip**: unzip anywhere and run DeskMate.exe.
+
+          Windows may show "Windows protected your PC" because the app isn't code-signed yet: click **More info** then **Run anyway**.
+          Your settings, chat history and API key are kept in %APPDATA%\DeskMate across updates.
+          "@
+          gh release create "${{ github.ref_name }}" `
+            "dist\DeskMate-Setup-$v.exe" "dist\DeskMate-$v-portable.zip" dist\SHA256SUMS.txt `
+            --title "DeskMate $v" --notes $notes --generate-notes

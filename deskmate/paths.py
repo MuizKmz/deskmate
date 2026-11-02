@@ -22,9 +22,28 @@ def project_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def bundle_root() -> Path:
+    """Where the files that ship with DeskMate are (inside the .exe's _internal folder when packaged)."""
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", project_root()))
+    return project_root()
+
+
 def characters_dir() -> Path:
+    """The characters that come with DeskMate."""
     override = os.environ.get("DESKMATE_CHARACTERS")
-    return Path(override) if override else project_root() / "characters"
+    if override:
+        return Path(override)
+    beside_exe = project_root() / "characters"  # a portable copy with characters/ next to the .exe
+    return beside_exe if beside_exe.is_dir() else bundle_root() / "characters"
+
+
+def character_dirs() -> list[Path]:
+    """Every place characters can live: the built-in ones, then your own in the data folder
+    (%APPDATA%\\DeskMate\\characters), which survives updates. Same name: yours wins."""
+    if os.environ.get("DESKMATE_CHARACTERS"):
+        return [characters_dir()]
+    return [characters_dir(), data_dir() / "characters"]
 
 
 def data_dir() -> Path:

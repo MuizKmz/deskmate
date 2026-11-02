@@ -20,7 +20,7 @@ import time
 from . import APP_NAME, __version__
 from .character import available_packs, find_pack, format_report, load_pack
 from .logsetup import setup_logging
-from .paths import characters_dir, data_dir
+from .paths import character_dirs, characters_dir, data_dir
 
 log = logging.getLogger("deskmate")
 
@@ -45,7 +45,7 @@ def _log_issues(pack) -> None:
 def _check(target: str) -> int:
     from pathlib import Path
 
-    folders = [Path(target)] if target else available_packs(characters_dir())
+    folders = [Path(target)] if target else available_packs(character_dirs())
     if not folders:
         print(f"No character folders found in {characters_dir()}")
         return 1
@@ -131,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.reset_position:
         settings["position"] = None
 
-    pack_folder = find_pack(characters_dir(), settings["character"])
+    pack_folder = find_pack(character_dirs(), settings["character"])
     pack = load_pack(pack_folder if pack_folder else characters_dir() / settings["character"])
     _log_issues(pack)
     if pack_folder and pack.id != settings["character"]:
@@ -502,7 +502,7 @@ class Controller:
             old_group.deleteLater()
         group = self._character_group = QActionGroup(self.character_menu)
         group.setExclusive(True)
-        for folder in available_packs(characters_dir()):
+        for folder in available_packs(character_dirs()):
             if not (folder / "idle").is_dir():
                 continue
             act = QAction(folder.name.replace("-", " ").replace("_", " ").title(), self.character_menu)

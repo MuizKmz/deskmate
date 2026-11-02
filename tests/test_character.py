@@ -112,6 +112,39 @@ class CharacterTests(unittest.TestCase):
         self.assertEqual(find_pack(chars, "missing").name, "alpha")
         self.assertIsNone(find_pack(self.root / "nothing", "x"))
 
+    def test_built_in_and_personal_characters_together(self):
+        from deskmate.character import available_packs
+
+        built_in, mine = self.root / "app" / "characters", self.root / "appdata" / "characters"
+        make_pack(built_in / "yuki", ("idle",), meta={})
+        make_pack(built_in / "piko", ("idle",), meta={})
+        make_pack(mine / "Yuki", ("idle", "happy"), meta={})  # your own edited copy
+        make_pack(mine / "neko", ("idle",), meta={})
+        packs = available_packs([built_in, mine, self.root / "missing"])
+        self.assertEqual([p.name for p in packs], ["neko", "piko", "Yuki"])
+        self.assertEqual(packs[2].parent, mine)  # yours wins over the built-in one
+        self.assertEqual(find_pack([built_in, mine], "neko").parent, mine)
+
+    def test_packaged_app_finds_its_bundled_characters(self):
+        import sys
+        from unittest import mock
+
+        from deskmate import paths
+
+        bundle = self.root / "DeskMate" / "_internal"
+        (bundle / "characters").mkdir(parents=True)
+        exe = self.root / "DeskMate" / "DeskMate.exe"
+        with mock.patch.object(sys, "frozen", True, create=True), \
+                mock.patch.object(sys, "_MEIPASS", str(bundle), create=True), \
+                mock.patch.object(sys, "executable", str(exe)), \
+                mock.patch.dict("os.environ", {"DESKMATE_HOME": str(self.root / "home")}):
+            import os
+            os.environ.pop("DESKMATE_CHARACTERS", None)
+            self.assertEqual(paths.characters_dir(), bundle / "characters")
+            self.assertEqual(paths.character_dirs()[1], self.root / "home" / "characters")
+            (exe.parent / "characters").mkdir()  # a portable copy with characters beside the exe
+            self.assertEqual(paths.characters_dir(), exe.parent / "characters")
+
 
 if __name__ == "__main__":
     unittest.main()
