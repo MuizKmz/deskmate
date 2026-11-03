@@ -50,7 +50,9 @@ dozes off when you leave, pouts when you ignore her, and reminds you to drink wa
 > [!NOTE]
 > Windows may say **"Windows protected your PC"**, because the app isn't code-signed (signing costs money every year). Click **More info** → **Run anyway**. Every release lists SHA-256 checksums if you want to verify the download.
 
-Prefer no installer? Take **`DeskMate-x.y.z-portable.zip`**, unzip it anywhere and run `DeskMate.exe`. Updating is the same: install the new version over the old one. Your settings, chat history and API key stay in `%APPDATA%\DeskMate`.
+Prefer no installer? Take **`DeskMate-x.y.z-portable.zip`**, unzip it anywhere and run `DeskMate.exe`.
+
+**Updates:** once a day she checks GitHub for a newer release (just a look at the public Releases page, nothing about you is sent). When there is one, she tells you once and her menu shows **Update to x.y.z...**, which opens the download page. Install the new version over the old one. (Settings › **Check for updates** turns this off.) Your settings, chat history and API key stay in `%APPDATA%\DeskMate`.
 
 <details>
 <summary>Run it from the source code instead (to tinker with it)</summary>
@@ -61,7 +63,7 @@ Double-click **`run_deskmate.bat`**. The first time, it sets itself up (about 1�
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 103 self-tests
+run_deskmate.bat --test        # run the 108 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -88,7 +90,7 @@ python -m venv .venv
 | **Right-click** her (or the tray icon) | The menu ⬇️ |
 | Click the **tray icon** | Hide / show her |
 
-**Menu:** a glass card in her colours, with her face and mood at the top. Chat with Yuki · Today's chat · Talk to me · Take a walk · Go to sleep / Wake up · Reminders · Character · Size · **Settings** › (switches for Always on top, Chit-chat, Gravity, Wander around, Sit on windows, Care reminders, Start with Windows · Voice · Chat settings · Forget today's chat · Move back to the corner · Open settings & logs folder) · Hide · Quit
+**Menu:** a glass card in her colours, with her face and mood at the top. Chat with Yuki · Today's chat · Talk to me · Take a walk · Go to sleep / Wake up · Reminders · Character · Size · **Settings** › (switches for Always on top, Chit-chat, Gravity, Wander around, Sit on windows, Care reminders, Start with Windows · Voice · Check for updates · Chat settings · Forget today's chat · Move back to the corner · Open settings & logs folder) · Hide · Quit
 
 <img src="docs/menu.png" alt="Her right-click menu: a dark glass card with her avatar, mood, icons and switches" width="520">
 
@@ -251,6 +253,7 @@ deskmate/
 ├── autostart.py        Start with Windows
 ├── perch.py            the window tops she can sit on (asks Windows for the open windows)
 ├── voice.py            her voice: Windows speech or OpenAI
+├── updates.py          "a new me is out!": checks GitHub for a newer release
 └── logsetup.py         log file, even with no console
 tools/prepare_character.py   picture clean-up → character pack
 tools/draw_pixel_character.py  draws Piko in code
@@ -258,7 +261,7 @@ tools/make_blink.py          makes a blink picture from idle + sleep
 tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
-tests/                       103 tests (python -m unittest)
+tests/                       108 tests (python -m unittest)
 packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno Setup)
 .github/workflows/           tests on every push; a tagged push builds and publishes a release
 ```

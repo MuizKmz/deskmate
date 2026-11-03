@@ -183,6 +183,7 @@ class Controller:
 
     TICK_MS = 250
     MISSED_DELAY_MS = 6000  # mention missed reminders after her hello
+    UPDATE_FIRST_MS = 20000  # first update check a little after start-up
 
     def __init__(self, app, settings, pack, frames, brain, idle):
         from PySide6.QtCore import QTimer
@@ -210,6 +211,8 @@ class Controller:
 
         self.reminders = ReminderBook(data_dir() / "reminders.json")
         self.speaker = self._make_speaker()
+        self._update = None  # a newer release, if GitHub has one
+        self._update_worker = None
 
         self.companion.clicked.connect(self._on_click)
         self.companion.dragStarted.connect(lambda: self._event(self.brain.on_drag_start))
@@ -254,6 +257,13 @@ class Controller:
         else:
             self.brain.on_start(now)
         self._tick_timer.start(self.TICK_MS)
+        from PySide6.QtCore import QTimer
+
+        self._update_timer = QTimer()
+        self._update_timer.setInterval(3600 * 1000)  # look every hour whether a day has passed
+        self._update_timer.timeout.connect(self._maybe_check_updates)
+        self._update_timer.start()
+        QTimer.singleShot(self.UPDATE_FIRST_MS, self._maybe_check_updates)
         self._apply(now)
         missed = self.reminders.pop_missed()
         if missed:
@@ -632,6 +642,10 @@ class Controller:
 
         self.menu_header = Header(menu, self.icon.pixmap(96), name, accent, smooth=self.pack.meta.get("smooth", True))
         menu.addSeparator()
+        self.act_update = action("Update available...", self.open_update_page, "sparkle")
+        self.act_update.setVisible(self._update is not None)
+        if self._update is not None:
+            self.act_update.setText(f"Update to {self._update.version}...")
         self.act_chat = action(f"Chat with {name}...", self.open_chat, "chat")
         self.act_chat_log = action("Today's chat", self.open_chat_log, "clock")
         self.act_talk = action("Talk to me", lambda: self._event(self.brain.on_talk_request), "sparkle")
@@ -694,6 +708,10 @@ class Controller:
         action("Forget today's chat", self._forget_chat, "eraser", settings)
         action("Move back to the corner", self.companion.reset_position, "corner", settings)
         action("Open settings && logs folder", self._open_data_folder, "folder", settings)
+        settings.addSeparator()
+        self.act_update_check = toggle("Check for updates", self._set_update_check, self.settings["update_check"],
+                                       settings)
+        action("Check for updates now", lambda: self.check_for_updates(manual=True), "sparkle", settings)
         menu.addSeparator()
 
         self.act_toggle = action(f"Hide {name}", self.toggle_visible, "eye-off")
@@ -875,6 +893,57 @@ class Controller:
         self._set("voice_everything", bool(on))
         self.speaker.everything = bool(on)
 
+    # --------------------------------------------------------------- updates
+    def _maybe_check_updates(self) -> None:
+        from .updates import CHECK_EVERY
+
+        if getattr(self, "_closed", False):
+            return
+        if self.settings["update_check"] and time.time() - self.settings["last_update_check"] >= CHECK_EVERY:
+            self.check_for_updates()
+
+    def check_for_updates(self, manual: bool = False, check=None) -> None:
+        """Ask GitHub (on a thread) whether a newer DeskMate is out."""
+        from . import __version__
+        from .chatbox import Background
+        from .updates import check as default_check
+
+        if self._update_worker is None:
+            self._update_worker = Background()
+        ask = check or default_check
+        self._update_worker.run(lambda: ask(__version__), lambda ok, value: self._on_update_checked(ok, value, manual))
+
+    def _on_update_checked(self, ok: bool, value, manual: bool) -> None:
+        if not ok:
+            log.info("Update check failed: %s", value)
+            if manual:
+                self._event(lambda now: self.brain.say(now, "I couldn't reach GitHub... let's try again later?", "pouty"))
+            return
+        self._set("last_update_check", time.time())
+        if value is None:
+            if manual:
+                self._event(lambda now: self.brain.say(now, "I'm already the newest me~", "happy"))
+            return
+        self._update = value
+        self.act_update.setText(f"Update to {value.version}...")
+        self.act_update.setVisible(True)
+        log.info("A newer DeskMate is out: %s", value.version)
+        if manual or self.settings["update_announced"] != value.version:
+            self._set("update_announced", value.version)
+            self._event(lambda now: self.brain.say(
+                now, f"A new me is out! (v{value.version}) Right-click me and pick Update to get it~", "wave"))
+
+    def open_update_page(self) -> None:
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        from .updates import RELEASES_PAGE
+
+        QDesktopServices.openUrl(QUrl(self._update.url if self._update else RELEASES_PAGE))
+
+    def _set_update_check(self, on: bool) -> None:
+        self._set("update_check", bool(on))
+
     def _set_perch(self, on: bool) -> None:
         self._set("perch", bool(on))
         self._apply_perch()
@@ -934,6 +1003,9 @@ class Controller:
         QApplication.quit()
 
     def _on_about_to_quit(self) -> None:
+        self._closed = True
+        if getattr(self, "_update_timer", None) is not None:
+            self._update_timer.stop()
         self._tick_timer.stop()
         self._save_timer.stop()
         self.settings.save()

@@ -421,6 +421,7 @@ class QtSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
             settings = Settings(Path(home) / "settings.json")
             settings["perch"] = False  # never sit on the test machine's real windows
+            settings["update_check"] = False  # no real GitHub calls in tests
             pack = load_pack(self.root)
             brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5), wallclock=noon)
             controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
@@ -463,6 +464,57 @@ class QtSmokeTests(unittest.TestCase):
             controller._on_about_to_quit()
             controller.companion.close()
 
+    def test_update_notice(self):
+        import random
+        from unittest import mock
+
+        from deskmate.app import Controller
+        from deskmate.brain import Brain
+        from deskmate.character import load_pack
+        from deskmate.companion import load_frames
+        from deskmate.settings import Settings
+        from deskmate.updates import Release
+
+        with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
+            settings = Settings(Path(home) / "settings.json")
+            settings["perch"] = False  # never sit on the test machine's real windows
+            settings["update_check"] = False  # the test asks by itself, with a pretend GitHub
+            pack = load_pack(self.root)
+            brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5), wallclock=noon)
+            controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
+            controller.start()
+            self.assertFalse(controller.act_update.isVisible())
+
+            def wait():
+                deadline = time.monotonic() + 5
+                while controller._update_worker.busy and time.monotonic() < deadline:
+                    spin(0.02)
+
+            controller.check_for_updates(manual=True, check=lambda current: None)
+            wait()
+            self.assertIn("newest", controller.bubble.text)
+
+            newer = Release("9.9.9", "https://github.com/MuizKmz/deskmate/releases/tag/v9.9.9")
+            controller.check_for_updates(check=lambda current: newer)
+            wait()
+            self.assertTrue(controller.act_update.isVisible())
+            self.assertEqual(controller.act_update.text(), "Update to 9.9.9...")
+            self.assertIn("v9.9.9", controller.bubble.text)
+            self.assertEqual(settings["update_announced"], "9.9.9")
+            with mock.patch.object(controller.bubble, "say") as say:
+                controller.check_for_updates(check=lambda current: newer)  # the automatic check again
+                wait()
+            say.assert_not_called()  # announced only once per version
+
+            def offline(current):
+                raise OSError("no internet")
+
+            controller.check_for_updates(manual=True, check=offline)
+            wait()
+            self.assertIn("GitHub", controller.bubble.text)
+            controller._on_about_to_quit()
+            controller.companion.close()
+
     def test_voice_settings_and_what_she_reads_out(self):
         import random
         from unittest import mock
@@ -476,6 +528,7 @@ class QtSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
             settings = Settings(Path(home) / "settings.json")
             settings["perch"] = False  # never sit on the test machine's real windows
+            settings["update_check"] = False  # no real GitHub calls in tests
             pack = load_pack(self.root)
             brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5), wallclock=noon)
             controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
@@ -521,6 +574,7 @@ class QtSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
             settings = Settings(Path(home) / "settings.json")
             settings["perch"] = False  # never sit on the test machine's real windows
+            settings["update_check"] = False  # no real GitHub calls in tests
             pack = load_pack(self.root)
             brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5), wallclock=noon)
             controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
@@ -591,6 +645,7 @@ class QtSmokeTests(unittest.TestCase):
                 {"reminders": [{"id": "old1", "due": missed_at, "text": "water the plants"}]}), encoding="utf-8")
             settings = Settings(Path(home) / "settings.json")
             settings["perch"] = False  # never sit on the test machine's real windows
+            settings["update_check"] = False  # no real GitHub calls in tests
             pack = load_pack(self.root)
             lines = dict(pack.lines, reminder=["Time: {what}!"], reminder_missed=["Missed: {what}"],
                          reminder_set=["Set for {time}"])
@@ -659,6 +714,7 @@ class QtSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
             settings = Settings(Path(home) / "settings.json")
             settings["perch"] = False  # never sit on the test machine's real windows
+            settings["update_check"] = False  # no real GitHub calls in tests
             pack = load_pack(self.root)
             brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(3), wallclock=noon)
             with self.assertLogs("deskmate", level="INFO") as captured:

@@ -411,7 +411,7 @@ Running from source needs Python. Real users want a download that just works. Th
 ```mermaid
 flowchart LR
     T["git push origin v0.3.0"] --> GA[GitHub Actions<br/>Windows machine]
-    GA --> TS[Run the 103 tests]
+    GA --> TS[Run the 108 tests]
     TS --> PI["PyInstaller<br/>DeskMate.exe + _internal"]
     PI --> CK["DeskMate.exe --check"]
     CK --> IS[Inno Setup<br/>installer]
@@ -495,11 +495,11 @@ When you come back after being away, she walks over to stand under your mouse.
 The brain knows when you return (`_wake`): queue a new animation such as `"come"`. In `app.py`'s `_apply`, turn it into `companion.start_wander(target_x=...)` using `QCursor.pos().x()`. `target_x` is the *window's* x, so subtract half her window width. Write the brain test first.
 </details>
 
-### 🟡 Auto-update check
-When a new release is out, she tells you ("A new me is available~").
+### 🟡 One-click update
+She already tells you when a new version is out (`updates.py`). Make **Update** download the installer and run it for you.
 <details><summary>💡 Hint</summary>
 
-Once a day, on a background thread (like the chat), fetch `https://api.github.com/repos/MuizKmz/deskmate/releases/latest`, compare its `tag_name` with `__version__`, and if it's newer, queue a speech line and add a menu item that opens the release page with `QDesktopServices.openUrl`.
+The release JSON has an `assets` list with each file's `browser_download_url`. Download `DeskMate-Setup-*.exe` on a thread to `%TEMP%`, check its SHA-256 against `SHA256SUMS.txt` from the same release (never run a file you haven't verified!), then start it with `/SILENT` and quit DeskMate so the installer can replace her.
 </details>
 
 ### 🔴 Claude as a third brain
