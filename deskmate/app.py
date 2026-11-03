@@ -209,6 +209,7 @@ class Controller:
         from .reminders import ReminderBook
 
         self.reminders = ReminderBook(data_dir() / "reminders.json")
+        self.speaker = self._make_speaker()
 
         self.companion.clicked.connect(self._on_click)
         self.companion.dragStarted.connect(lambda: self._event(self.brain.on_drag_start))
@@ -282,6 +283,10 @@ class Controller:
             if visible:
                 self.bubble.say(speech.text, speech.duration,
                                 self.companion.head_rect_global(), self.companion.available_rect())
+                try:
+                    self.speaker.say(speech.text, speech.kind)
+                except Exception:  # her voice must never break her
+                    log.exception("Voice failed")
         if self.tray is not None:
             tip = f"{self.pack.name} is {self.brain.label(now)}"
             if tip != self._tooltip:
@@ -554,6 +559,7 @@ class Controller:
         history = self.chat.history
         self.chat = self._make_chat()
         self.chat.history = history
+        self.speaker.openai.config.api_key = load_key(secrets)
         log.info("Chat settings saved (provider %s)", provider)
         return True
 
@@ -667,6 +673,22 @@ class Controller:
         self.act_autostart = None
         if autostart.supported():
             self.act_autostart = toggle("Start with Windows", self._set_autostart, autostart.is_enabled(), settings)
+        voice_menu = submenu(settings, "Voice", "sparkle")
+        voice_group = QActionGroup(voice_menu)
+        voice_group.setExclusive(True)
+        self._voice_actions = {}
+        for key, label in (("off", "Off"), ("windows", "Windows voice (free)"), ("openai", "Natural voice (OpenAI)")):
+            act = QAction(label, voice_menu)
+            act.setCheckable(True)
+            act.setChecked(self.settings["voice"] == key)
+            act.triggered.connect(functools.partial(self._set_voice, key))
+            voice_group.addAction(act)
+            voice_menu.addAction(act)
+            self._voice_actions[key] = act
+        self._mark_choices(self._voice_actions.values())
+        voice_menu.addSeparator()
+        self.act_voice_all = toggle("Read all her lines (not just chat)", self._set_voice_everything,
+                                    self.settings["voice_everything"], voice_menu)
         settings.addSeparator()
         action("Chat settings...", self.open_chat_settings, "key", settings)
         action("Forget today's chat", self._forget_chat, "eraser", settings)
@@ -822,6 +844,37 @@ class Controller:
         self.brain.wander = bool(on)
         self._set("wander", bool(on))
 
+    def _make_speaker(self):
+        from .chat import ChatConfig, load_key
+        from .chatbox import Background
+        from .voice import OpenAIVoice, Speaker, WindowsVoice
+
+        self._voice_worker = Background()
+        config = ChatConfig(provider="openai", api_key=load_key(data_dir() / "secrets.json"))
+        natural = OpenAIVoice(config, voice=self.settings["openai_voice"], model=self.settings["tts_model"])
+        return Speaker(WindowsVoice(), natural, self._voice_worker.run, mode=self.settings["voice"],
+                       everything=self.settings["voice_everything"])
+
+    def _set_voice(self, mode: str, _checked: bool = True) -> None:
+        from .chat import load_key
+
+        self._set("voice", mode)
+        self.speaker.stop()
+        self.speaker.mode = mode
+        self.speaker.openai.config.api_key = load_key(data_dir() / "secrets.json")
+        self._mark_choices(self._voice_actions.values())
+        if mode == "openai" and not self.speaker.openai.config.api_key:
+            self._event(lambda now: self.brain.say(now, "I need your OpenAI key for that voice... "
+                                                        "add it in Settings, Chat settings~", "pouty"))
+            return
+        if mode != "off":
+            lines = {"windows": "Can you hear me now?", "openai": "Hehe, how do I sound~?"}
+            self.speaker.say(lines[mode], "chat")  # a quick sample, even if she only reads chat
+
+    def _set_voice_everything(self, on: bool) -> None:
+        self._set("voice_everything", bool(on))
+        self.speaker.everything = bool(on)
+
     def _set_perch(self, on: bool) -> None:
         self._set("perch", bool(on))
         self._apply_perch()
@@ -888,6 +941,13 @@ class Controller:
         for window in (self._chat_box, self._chat_log):
             if window is not None:
                 window.hide()
+        try:
+            self.speaker.stop()
+            if self.speaker.openai is not None and self.speaker.openai.model and not self.settings["tts_model"]:
+                self.settings["tts_model"] = self.speaker.openai.model
+                self.settings.save()
+        except Exception:
+            log.exception("Couldn't stop her voice")
         if self.tray is not None:
             self.tray.hide()
 

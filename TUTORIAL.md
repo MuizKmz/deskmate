@@ -368,6 +368,23 @@ A chat model only produces text. To let her actually set a reminder, the prompt 
 
 The time parser is a good example of testing many small cases: `tests/test_reminders.py` checks `3pm`, `15:00`, `in 20 min`, `1h30`, and also what must **not** count as a time (`10 push-ups` is not "in 10 minutes").
 
+### Her voice: two engines, one decision-maker
+
+`voice.py` has two very different engines behind one `Speaker`:
+
+| | Windows voice | OpenAI voice |
+|---|---|---|
+| How | A hidden PowerShell runs .NET's `System.Speech` | `POST /audio/speech` returns a WAV clip, played with Python's `winsound` |
+| Text goes in via | the program's **input** (never inside the command, so no quoting bugs or injection) | the JSON body |
+| Speed | instant | needs the network, so it runs on a thread |
+
+Two small ideas keep it pleasant:
+
+- **Newest line wins.** Each line gets a number (`_turn`). If an older clip arrives after she has already moved on, it's quietly dropped.
+- **Graceful fallback.** If the OpenAI clip fails, the same line is spoken by the Windows voice instead of silence.
+
+`Speaker` never touches Qt or the sound card directly: it's given the engines and a "run this in the background" function. So the tests hand it fake engines and check *what* she would say, without making a sound.
+
 ### Failing gently
 
 Every problem becomes a `ChatError` with a `kind` (`no_key`, `auth`, `quota`, `offline`, …), and each kind has a line in her own voice (`OFFLINE_LINES`). The technical detail goes to the log, never the key itself.
@@ -394,7 +411,7 @@ Running from source needs Python. Real users want a download that just works. Th
 ```mermaid
 flowchart LR
     T["git push origin v0.3.0"] --> GA[GitHub Actions<br/>Windows machine]
-    GA --> TS[Run the 92 tests]
+    GA --> TS[Run the 103 tests]
     TS --> PI["PyInstaller<br/>DeskMate.exe + _internal"]
     PI --> CK["DeskMate.exe --check"]
     CK --> IS[Inno Setup<br/>installer]

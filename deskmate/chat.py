@@ -64,7 +64,8 @@ class ChatConfig:
 
 
 # --------------------------------------------------------------------- the API
-def _request(config: ChatConfig, path: str, body: dict | None = None, timeout: float = TIMEOUT) -> dict:
+def _request(config: ChatConfig, path: str, body: dict | None = None, timeout: float = TIMEOUT, raw: bool = False):
+    """Call the API. Returns the JSON answer, or the raw bytes with ``raw=True`` (e.g. audio)."""
     if config.needs_key and not config.api_key:
         raise ChatError("no_key")
     headers = {"Content-Type": "application/json", "User-Agent": "DeskMate"}
@@ -79,7 +80,8 @@ def _request(config: ChatConfig, path: str, body: dict | None = None, timeout: f
               if host in ("localhost", "127.0.0.1", "::1") else urllib.request.build_opener())
     try:
         with opener.open(request, timeout=timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
+            payload = response.read()
+            return payload if raw else json.loads(payload.decode("utf-8"))
     except urllib.error.HTTPError as error:
         detail = _error_message(error)
         if error.code == 401:

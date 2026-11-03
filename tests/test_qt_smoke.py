@@ -463,6 +463,48 @@ class QtSmokeTests(unittest.TestCase):
             controller._on_about_to_quit()
             controller.companion.close()
 
+    def test_voice_settings_and_what_she_reads_out(self):
+        import random
+        from unittest import mock
+
+        from deskmate.app import Controller
+        from deskmate.brain import Brain
+        from deskmate.character import load_pack
+        from deskmate.companion import load_frames
+        from deskmate.settings import Settings
+
+        with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
+            settings = Settings(Path(home) / "settings.json")
+            settings["perch"] = False  # never sit on the test machine's real windows
+            pack = load_pack(self.root)
+            brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5), wallclock=noon)
+            controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
+            windows = mock.MagicMock()
+            windows.available.return_value = True
+            controller.speaker.windows = windows  # no real speech engine in tests
+            controller.start()
+            spin(0.2)
+            windows.speak.assert_not_called()  # voice is off until you switch it on
+
+            labels = [a.text() for a in controller._voice_actions.values()]
+            self.assertEqual(labels, ["Off", "Windows voice (free)", "Natural voice (OpenAI)"])
+            controller._voice_actions["windows"].trigger()
+            self.assertEqual(settings["voice"], "windows")
+            windows.speak.assert_called_once_with("Can you hear me now?")  # a quick sample
+
+            controller._event(lambda now: brain.on_chat_reply(now, "happy", "Hehe~ hi!"))
+            windows.speak.assert_called_with("Hehe hi!")
+            calls = windows.speak.call_count
+            controller._event(lambda now: brain.on_pet(now))  # an ordinary line: not read out by default
+            self.assertEqual(windows.speak.call_count, calls)
+            controller.act_voice_all.trigger()
+            self.assertTrue(settings["voice_everything"])
+
+            controller._voice_actions["openai"].trigger()  # no key saved: she asks for one instead
+            self.assertIn("key", controller.bubble.text)
+            controller._on_about_to_quit()
+            controller.companion.close()
+
     def test_chat_log_window(self):
         import random
         from unittest import mock

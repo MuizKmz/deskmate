@@ -61,6 +61,7 @@ POSE_SECONDS = {"wave": 2.6, "stretch": 2.6, "yawn": 2.2}  # a gesture, not a fa
 class Speech:
     text: str
     duration: float
+    kind: str = "line"  # "chat" for her chat replies (the voice can be set to read only those)
 
 
 def speech_duration(text: str) -> float:
@@ -299,7 +300,7 @@ class Brain:
     def on_chat_reply(self, now: float, mood: str, text: str) -> None:
         """Her answer from the chat model: show it in the bubble with the mood it came with."""
         duration = min(14.0, speech_duration(text) + 0.04 * max(0, len(text) - 90))
-        self._speech.append(Speech(text, duration))
+        self._speech.append(Speech(text, duration, "chat"))
         self._speech_until = now + duration
         self._react(mood or "talk", now, duration)
         self.last_interaction = now

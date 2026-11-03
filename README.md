@@ -33,7 +33,7 @@ dozes off when you leave, pouts when you ignore her, and reminds you to drink wa
 | 😤 **Has feelings** | Pouts if you work for ages without saying hi. One pat and she forgives you. |
 | 💧 **Takes care of you** | Gentle reminders to drink water, stretch, and go to bed when you work past 11 pm (can be switched off). |
 | ⏰ **Reminds you** | "Remind me at 3pm about the meeting": ask in chat or add one from her menu, and she tells you on time. |
-| 💬 **Talks** | Speech bubbles with a typing effect, from her own lines in `character.json`. |
+| 💬 **Talks** | Speech bubbles with a typing effect, from her own lines in `character.json`. She can also say them out loud. |
 | 🧠 **Chats with you** | Type to her and she answers in character, powered by OpenAI or a free local model (Ollama). Remembers your day. |
 | 🛡️ **Hard to break** | One copy at a time, safe settings saves, never gets lost off-screen, logs every error, and still starts if images are missing. |
 
@@ -61,7 +61,7 @@ Double-click **`run_deskmate.bat`**. The first time, it sets itself up (about 1�
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 92 self-tests
+run_deskmate.bat --test        # run the 103 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -88,7 +88,7 @@ python -m venv .venv
 | **Right-click** her (or the tray icon) | The menu ⬇️ |
 | Click the **tray icon** | Hide / show her |
 
-**Menu:** a glass card in her colours, with her face and mood at the top. Chat with Yuki · Today's chat · Talk to me · Take a walk · Go to sleep / Wake up · Reminders · Character · Size · **Settings** › (switches for Always on top, Chit-chat, Gravity, Wander around, Sit on windows, Care reminders, Start with Windows · Chat settings · Forget today's chat · Move back to the corner · Open settings & logs folder) · Hide · Quit
+**Menu:** a glass card in her colours, with her face and mood at the top. Chat with Yuki · Today's chat · Talk to me · Take a walk · Go to sleep / Wake up · Reminders · Character · Size · **Settings** › (switches for Always on top, Chit-chat, Gravity, Wander around, Sit on windows, Care reminders, Start with Windows · Voice · Chat settings · Forget today's chat · Move back to the corner · Open settings & logs folder) · Hide · Quit
 
 <img src="docs/menu.png" alt="Her right-click menu: a dark glass card with her avatar, mood, icons and switches" width="520">
 
@@ -119,6 +119,18 @@ The first time, the **Chat settings** box opens. Pick her "chat brain":
 
 > [!IMPORTANT]
 > Your key is saved only on your PC, in `%APPDATA%\DeskMate\secrets.json`, never in this folder, so it can't end up on GitHub. Set a monthly spending limit on your OpenAI account to be safe. You can also use the `OPENAI_API_KEY` environment variable instead.
+
+### 🔊 Her voice
+
+Right-click → Settings › **Voice**:
+
+| | |
+|---|---|
+| **Off** | Quiet (the default) |
+| **Windows voice (free)** | The speech engine built into Windows. Works offline, a little robotic |
+| **Natural voice (OpenAI)** | A soft, natural voice using your OpenAI key (a fraction of a cent per line). If it can't connect, the Windows voice takes over |
+
+She reads out her **chat replies**. Tick **Read all her lines** to hear her greetings and reminders too. Decorations like `~` and `*yawn*` aren't read out.
 
 ### ⏰ Reminders
 
@@ -238,6 +250,7 @@ deskmate/
 ├── sysidle.py          "is the user away?" (Windows idle time)
 ├── autostart.py        Start with Windows
 ├── perch.py            the window tops she can sit on (asks Windows for the open windows)
+├── voice.py            her voice: Windows speech or OpenAI
 └── logsetup.py         log file, even with no console
 tools/prepare_character.py   picture clean-up → character pack
 tools/draw_pixel_character.py  draws Piko in code
@@ -245,7 +258,7 @@ tools/make_blink.py          makes a blink picture from idle + sleep
 tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
-tests/                       92 tests (python -m unittest)
+tests/                       103 tests (python -m unittest)
 packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno Setup)
 .github/workflows/           tests on every push; a tagged push builds and publishes a release
 ```

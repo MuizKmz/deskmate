@@ -8,7 +8,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 class FakeOpenAI:
-    MODELS = ["gpt-4o-mini-transcribe", "gpt-5-mini", "gpt-5.4-mini", "gpt-6.1-sol", "text-embedding-3-small"]
+    MODELS = ["gpt-4o-mini-transcribe", "gpt-4o-mini-tts", "gpt-5-mini", "gpt-5.4-mini", "gpt-6.1-sol",
+              "text-embedding-3-small", "tts-1", "tts-1-hd"]
+    WAV = b"RIFF\x24\x00\x00\x00WAVEfmt fake-audio"
 
     def __init__(self, key: str = "sk-test-1234567890"):
         self.key = key
@@ -45,8 +47,16 @@ class FakeOpenAI:
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 fake.requests.append(body)
-                if self._check():
-                    self._send(200, {"choices": [{"message": {"role": "assistant", "content": fake.reply}}]})
+                if not self._check():
+                    return
+                if self.path.endswith("/audio/speech"):  # her voice: raw WAV bytes, not JSON
+                    self.send_response(200)
+                    self.send_header("Content-Type", "audio/wav")
+                    self.send_header("Content-Length", str(len(fake.WAV)))
+                    self.end_headers()
+                    self.wfile.write(fake.WAV)
+                    return
+                self._send(200, {"choices": [{"message": {"role": "assistant", "content": fake.reply}}]})
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}/v1"

@@ -106,7 +106,7 @@ class WindowsLedges:
         right, bottom = self._to_logical(rect[2], rect[3])
         if right - left < MIN_WIDTH or bottom - top < 40:
             return None
-        return Ledge(int(hwnd), float(left), float(right), float(top), float(bottom), z)
+        return Ledge(int(getattr(hwnd, "value", hwnd) or 0), float(left), float(right), float(top), float(bottom), z)
 
     def ledges(self) -> list[Ledge]:
         found: list[Ledge] = []
@@ -128,12 +128,13 @@ class WindowsLedges:
         """Where that window's top is now (None if it's gone, minimised, hidden...)."""
         if not window_id:
             return None
-        hwnd = self._wt.HWND(window_id)
+        hwnd = int(window_id)  # a plain number: the argtypes turn it into an HWND (int(HWND(...)) would fail)
         if not self._user32.IsWindow(hwnd):
             return None
         try:
             return self._ledge(hwnd, 0) if self._usable(hwnd) else None
         except Exception:
+            log.debug("Couldn't read window %s", window_id, exc_info=True)
             return None
 
 
