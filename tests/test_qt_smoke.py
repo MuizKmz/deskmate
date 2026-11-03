@@ -55,6 +55,14 @@ def mouse(widget, kind, local, button=None, buttons=None):
     QApplication.sendEvent(widget, event)
 
 
+def noon():
+    """A pretend wall clock: always 12:00. The real time would make her say late-night lines
+    when the tests happen to run at night (GitHub's machines run on UTC)."""
+    from datetime import datetime
+
+    return datetime(2026, 11, 3, 12, 0)
+
+
 class ActiveUser:
     """Pretend someone is using the PC right now. (The real idle time on a CI machine is
     "nobody touched it for ages", which would make her yawn instead of saying hello.)"""
@@ -307,7 +315,7 @@ class QtSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
             settings = Settings(Path(home) / "settings.json")
             pack = load_pack(self.root)
-            brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5))
+            brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5), wallclock=noon)
             controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
             controller.start()
             controller.chat.config.api_key = fake.key
@@ -371,7 +379,7 @@ class QtSmokeTests(unittest.TestCase):
             pack = load_pack(self.root)
             lines = dict(pack.lines, reminder=["Time: {what}!"], reminder_missed=["Missed: {what}"],
                          reminder_set=["Set for {time}"])
-            brain = Brain(lines, now=time.monotonic(), rng=random.Random(5))
+            brain = Brain(lines, now=time.monotonic(), rng=random.Random(5), wallclock=noon)
             controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
             controller.MISSED_DELAY_MS = 0
             controller.start()
@@ -436,7 +444,7 @@ class QtSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
             settings = Settings(Path(home) / "settings.json")
             pack = load_pack(self.root)
-            brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(3))
+            brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(3), wallclock=noon)
             with self.assertLogs("deskmate", level="INFO") as captured:
                 logging.getLogger("deskmate").info("test started")
                 controller = Controller(self.app, settings, pack, load_frames(pack), brain,
