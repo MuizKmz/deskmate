@@ -34,7 +34,8 @@ dozes off when you leave, pouts when you ignore her, and reminds you to drink wa
 | 💧 **Takes care of you** | Gentle reminders to drink water, stretch, and go to bed when you work past 11 pm (can be switched off). |
 | ⏰ **Reminds you** | "Remind me at 3pm about the meeting": ask in chat or add one from her menu, and she tells you on time. |
 | 💬 **Talks** | Speech bubbles with a typing effect, from her own lines in `character.json`. She can also say them out loud. |
-| 🧠 **Chats with you** | Type to her and she answers in character, powered by OpenAI or a free local model (Ollama). Remembers your day. |
+| 🧠 **Chats with you** | Type to her and she answers in character, powered by OpenAI, Claude or a free local model (Ollama). Remembers your day. |
+| 👀 **Watches with you** | Only if you say yes: she notices what you open and reacts like a buddy ("Ooh, lo-fi~ study playlist?"), and you can ask her about anything on your screen. |
 | 🛡️ **Hard to break** | One copy at a time, safe settings saves, never gets lost off-screen, logs every error, and still starts if images are missing. |
 
 ---
@@ -63,7 +64,7 @@ Double-click **`run_deskmate.bat`**. The first time, it sets itself up (about 1�
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 115 self-tests
+run_deskmate.bat --test        # run the 121 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -124,21 +125,24 @@ You can save both an OpenAI and an Anthropic key and switch between them; each i
 > [!IMPORTANT]
 > Your key is saved only on your PC, in `%APPDATA%\DeskMate\secrets.json`, never in this folder, so it can't end up on GitHub. Set a monthly spending limit on your OpenAI account to be safe. You can also use the `OPENAI_API_KEY` environment variable instead.
 
-### 👀 Show her your screen
+### 👀 Watch with me (buddy mode)
 
-Stuck on an error, a form, a chart? Right-click her → **Look at my screen...** (or the 👁 button in the chat windows).
+Right-click her → **Watch with me...** (or the 👁 button in the chat windows). She asks first, every time:
 
-1. She disappears for a moment and your screen freezes, a little dimmed.
-2. **Drag a box** over what she should look at. **Enter** = the whole screen, **Esc** = never mind.
-3. Today's chat opens with your picture. Type a question, or just press **Enter** ("Can you take a look at this?").
+| | |
+|---|---|
+| **For** | 30 min · 1 hour · 2 hours · until you stop it |
+| **She speaks up** | now and then (10 min apart at most) · sometimes (4 min) · often (1–2 min) |
+| **She can see the screen itself** | on: she sees what's on screen (smarter). Off: only the app and window title, like `lofi hip hop radio - YouTube` |
 
-She answers like a friend sitting next to you: one line in her bubble, and the real help in the chat window. Depending on what she sees, that's **steps** to fix it, a short **example** (code gets its own box), or a **question back** when she can't tell what you need, instead of guessing.
+Then just do your thing. When you settle on something new (a video, a song, a game, a file), she notices and says something like a friend next to you would: *"Ooh, lo-fi~ is this your study playlist?"*, *"Whoa, a red error! Want me to look?"* If there's nothing worth saying, she stays quiet.
 
-For the next 5 minutes your follow-up questions still include the picture ("and this line?"). **Stop** in the chat window ends that early.
-
-- Works with all three brains. On Ollama, use a model that can see pictures (`ollama pull llama3.2-vision`); a text-only model makes her say her eyes don't work.
-- The picture is made only when you ask, kept only in memory, and sent only to your chat brain. It's never saved; today's chat file keeps only the words.
-- Big screens are shrunk to 1568 px on the long side first, so it stays quick and cheap.
+- **Answer her** in chat ("yes I love it"): she knows what she was talking about. While she watches, every message you send includes what's on your screen right now, so you can also just ask *"what does this error mean?"*. For help, the chat window gets **steps**, a short **example**, or a **question back**.
+- A **👀 watching** badge sits above her the whole time. **Click it** to stop (or **Stop** in the chat window, or the menu). It also stops by itself when the time is up.
+- **Never:** incognito / InPrivate windows, password managers, banking or sign-in pages: no picture, no comment. She stays quiet during Teams / Zoom / Meet calls, while you're chatting, when you're away from the PC, and when she's asleep.
+- She doesn't repeat herself about the same thing, and there's a limit per hour.
+- Pictures stay in memory and go only to your chat brain. Today's chat file keeps only the words. On Windows 10/11 her own windows are left out of the picture, so she sees what's behind her (and doesn't flicker).
+- Works with all three brains. On Ollama, use a model that can see pictures (`ollama pull llama3.2-vision`), or untick "see the screen".
 
 ### 🔊 Her voice
 
@@ -263,7 +267,8 @@ deskmate/
 ├── bubble.py           speech bubble with typing effect
 ├── chat.py             talking to OpenAI / Claude / Ollama (pure Python, tested with a fake server)
 ├── chatbox.py          the chat box, the Today's chat window and the Chat settings dialog
-├── look.py             "look at my screen": the drag-a-box overlay and the picture she gets
+├── look.py             buddy mode's windows: the permission box, the 👀 badge, screen pictures
+├── activity.py         buddy mode's eyes: which app / tab you're on, and when a comment is due
 ├── menu_style.py       her glass right-click menu (icons and switches drawn in code)
 ├── character.py        loads + checks character packs
 ├── settings.py         settings with safe saves
@@ -280,7 +285,7 @@ tools/make_blink.py          makes a blink picture from idle + sleep
 tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
-tests/                       115 tests (python -m unittest)
+tests/                       121 tests (python -m unittest)
 packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno Setup)
 .github/workflows/           tests on every push; a tagged push builds and publishes a release
 ```
@@ -299,7 +304,7 @@ GitHub Actions runs the tests on Windows, builds `DeskMate.exe`, makes the insta
 - ✅ **Phase 2 — Alive:** blinking, gravity, flinging, walking along the taskbar with a real walk cycle.
 - ✅ **Phase 3 — AI:** chat with her (OpenAI or a free local model with Ollama), she remembers your day.
 - ✅ **Phase 3½ — Extras:** sit on windows, wave / stretch / yawn, a chat log window, voice, Claude as a third chat brain, "a new version is out" notice.
-- **Phase 5 — She notices you:** ✅ look at your screen · talk to her with your voice · knows which app you're in · remembers you across days.
+- **Phase 5 — She notices you:** ✅ watches with you (buddy mode) · talk to her with your voice · knows which app you're in · remembers you across days.
 - ⏸️ **Phase 4 — Online:** a shared pet for your team (on hold).
 
 ---

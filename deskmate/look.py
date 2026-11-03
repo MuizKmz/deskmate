@@ -1,27 +1,37 @@
-"""'Look at my screen': you drag over a part of the screen and she gets a picture of it.
+"""Buddy mode, the window side: asking permission, the 'watching' badge, and screen pictures.
 
-How it goes (the Controller in app.py drives it):
-
-1. She and her windows turn invisible for a moment, so she isn't in her own screenshot.
-2. The screen under your mouse is photographed, frozen, and shown full-screen by ScreenPicker.
-3. You drag a box over what you want her to see (or press Enter for the whole screen, Esc to
-   cancel). The chosen part becomes a Snapshot: a JPEG kept in memory only, never saved.
-4. The Snapshot goes to her chat brain together with your question (see chat.ChatSession.show).
+* ``WatchDialog`` asks first, every time: may she watch, for how long, can she see the screen
+  itself (or only which app and title), and how chatty may she be.
+* ``WatchBadge`` is a small 👀 pill beside her for as long as she watches. Click it to stop.
+* ``exclude_from_capture`` keeps her own windows out of the screen picture (Windows 10 2004+):
+  she sees what's *behind* her, and doesn't flicker. Turned off again when she stops watching,
+  so your own screenshots and recordings still show her.
+* ``grab_screen`` + ``snapshot_from`` turn the screen into a small JPEG, kept in memory only.
 """
 
 from __future__ import annotations
 
+import sys
+
 from PySide6.QtCore import QBuffer, QIODevice, QPoint, QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QImage, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QWidget
+from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtWidgets import (
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel, QVBoxLayout, QWidget,
+)
 
 from .chat import Snapshot
 
 MAX_SIDE = 1568  # big enough to read code and small text, small enough to be quick and cheap
 JPEG_QUALITY = 85
-HIDE_MS = 250  # how long to wait after she turns invisible before taking the picture
+HIDE_MS = 250  # without capture exclusion: how long she stays invisible before the picture is taken
+WDA_NONE, WDA_EXCLUDEFROMCAPTURE = 0x0, 0x11
+
+DURATIONS = [(30, "30 minutes"), (60, "1 hour"), (120, "2 hours"), (0, "Until I stop it")]
+LEVELS = [("quiet", "Now and then (every 10 min at most)"), ("normal", "Sometimes (every 4 min at most)"),
+          ("chatty", "Often (every 1–2 min)")]
 
 
+# ------------------------------------------------------------------ pictures
 def snapshot_from(image: QImage, max_side: int = MAX_SIDE) -> Snapshot:
     """Shrink (if needed) and JPEG-encode a picture for the chat brain."""
     if max(image.width(), image.height()) > max_side:
@@ -38,152 +48,144 @@ def snapshot_from(image: QImage, max_side: int = MAX_SIDE) -> Snapshot:
     return Snapshot(bytes(buffer.data()), image.width(), image.height(), "image/png")
 
 
-def thumbnail(image: QImage, width: int = 240, height: int = 150) -> QPixmap:
-    return QPixmap.fromImage(image.scaled(width, height, Qt.AspectRatioMode.KeepAspectRatio,
-                                          Qt.TransformationMode.SmoothTransformation))
+def grab_screen(screen) -> QImage:
+    """A picture of one whole screen, in real pixels."""
+    return screen.grabWindow(0).toImage()
 
 
-class ScreenPicker(QWidget):
-    """The frozen screen, dimmed, with a box you drag over the part she should look at."""
+def exclude_from_capture(widget: QWidget, on: bool) -> bool:
+    """Hide ``widget`` from screen pictures (it stays visible to you). True if Windows did it."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
 
-    picked = Signal(QImage)  # the chosen part, at full resolution
-    cancelled = Signal()
-    MIN_DRAG = 12  # smaller than this counts as a click: the whole screen
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
+        user32.SetWindowDisplayAffinity.restype = wintypes.BOOL
+        return bool(user32.SetWindowDisplayAffinity(int(widget.winId()), WDA_EXCLUDEFROMCAPTURE if on else WDA_NONE))
+    except Exception:
+        return False
 
-    HINT = "Drag over what you want me to look at   ·   Enter: whole screen   ·   Esc: cancel"
-    SMALL = "The picture only goes to your chat brain with your question. It's never saved."
 
-    def __init__(self, shot: QPixmap, geometry: QRect, accent: QColor):
-        flags = (Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
+# ---------------------------------------------------------------- permission
+class WatchDialog(QDialog):
+    """'Can I watch with you?' Asked every time she starts watching."""
+
+    def __init__(self, name: str, settings, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Let {name} watch with you?")
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        self.setMinimumWidth(470)
+
+        intro = QLabel(
+            f"<b>{name} will see what you're doing</b> — which app or tab is open, and what's on your screen — "
+            f"and react like a friend sitting next to you (“Ooh, is this your study playlist?”). "
+            f"You can also ask her about anything on your screen.")
+        intro.setWordWrap(True)
+
+        self.duration = QComboBox()
+        for minutes, label in DURATIONS:
+            self.duration.addItem(label, minutes)
+        self.duration.setCurrentIndex(max(0, self.duration.findData(settings["watch_minutes"])))
+        self.picture = QCheckBox("She can see the screen itself (smarter)")
+        self.picture.setChecked(settings["watch_picture"])
+        self.picture.setToolTip("Off: she only knows the app and window title, like \"lofi beats - YouTube\".")
+        self.level = QComboBox()
+        for level, label in LEVELS:
+            self.level.addItem(label, level)
+        self.level.setCurrentIndex(max(0, self.level.findData(settings["watch_level"])))
+
+        form = QFormLayout()
+        form.addRow("For", self.duration)
+        form.addRow("She speaks up", self.level)
+        form.addRow("", self.picture)
+
+        privacy = QLabel(
+            "• Pictures go only to your chat brain, never saved to disk (today's chat keeps the words).<br>"
+            "• She never looks at incognito / private windows, password managers or banking, "
+            "and stays quiet during calls.<br>"
+            "• While she watches, a 👀 badge sits next to her. Click it (or Stop in her menu) to end it.<br>"
+            "• Each comment sends one picture to your chat brain (about a cent or less with a mini/Haiku model).")
+        privacy.setWordWrap(True)
+        privacy.setStyleSheet("color: gray;")
+
+        buttons = QDialogButtonBox()
+        self.allow = buttons.addButton("Let her watch", QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.addButton("Not now", QDialogButtonBox.ButtonRole.RejectRole)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(intro)
+        layout.addSpacing(6)
+        layout.addLayout(form)
+        layout.addWidget(privacy)
+        layout.addWidget(buttons)
+
+    @property
+    def minutes(self) -> int:
+        return self.duration.currentData()
+
+    @property
+    def with_picture(self) -> bool:
+        return self.picture.isChecked()
+
+    @property
+    def chattiness(self) -> str:
+        return self.level.currentData()
+
+
+# --------------------------------------------------------------------- badge
+class WatchBadge(QWidget):
+    """A small '👀 watching' pill beside her while buddy mode is on. Click it to stop."""
+
+    clicked = Signal()
+    W, H = 104, 26
+
+    def __init__(self, name: str, accent: QColor):
+        flags = (Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint
+                 | Qt.WindowType.WindowDoesNotAcceptFocus)
         super().__init__(None, flags)
-        self.setWindowTitle("Look at my screen")
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self.setCursor(Qt.CursorShape.CrossCursor)
-        self.setMouseTracking(True)
-        self.setGeometry(geometry)
-        self._shot = shot
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedSize(self.W, self.H)
         self._accent = QColor(accent)
-        self._start: QPoint | None = None
-        self._end: QPoint | None = None
-        self._done = False
+        self._text = "👀 watching"
+        self._name = name
+        self.set_left("")
 
-    def open(self) -> None:
-        self.show()
-        self.raise_()
-        self.activateWindow()
-        self.setFocus()
+    def set_left(self, left: str) -> None:
+        """'12 min left' or '' (until you stop it)."""
+        self.setToolTip(f"{self._name} is watching your screen with you" + (f" ({left})" if left else "")
+                        + ".\nClick to stop.")
 
-    # -------------------------------------------------------------- choosing
-    def selection(self) -> QRect:
-        if self._start is None or self._end is None:
-            return QRect()
-        a, b = self._start, self._end  # (QRect(a, b) would include both corners: 1 pixel too big)
-        box = QRect(min(a.x(), b.x()), min(a.y(), b.y()), abs(a.x() - b.x()), abs(a.y() - b.y()))
-        return box.intersected(self.rect())
+    def place(self, body: QRect) -> None:
+        """Just above her head, on the right."""
+        self.move(QPoint(body.right() - self.W + 6, max(0, body.top() - self.H - 2)))
 
     def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.RightButton:
-            self.cancel()
-        elif event.button() == Qt.MouseButton.LeftButton:
-            self._start = self._end = event.position().toPoint()
-            self.update()
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
 
-    def mouseMoveEvent(self, event) -> None:
-        if self._start is not None:
-            self._end = event.position().toPoint()
-            self.update()
-
-    def mouseReleaseEvent(self, event) -> None:
-        if event.button() != Qt.MouseButton.LeftButton or self._start is None:
-            return
-        self._end = event.position().toPoint()
-        box = self.selection()
-        self.choose(box if box.width() >= self.MIN_DRAG and box.height() >= self.MIN_DRAG else None)
-
-    def keyPressEvent(self, event: QKeyEvent) -> None:
-        if event.key() == Qt.Key.Key_Escape:
-            self.cancel()
-        elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            box = self.selection()
-            self.choose(box if box.width() >= self.MIN_DRAG and box.height() >= self.MIN_DRAG else None)
-        else:
-            super().keyPressEvent(event)
-
-    def choose(self, box: QRect | None) -> None:
-        """``box`` in this window's (logical) pixels, or None for the whole screen."""
-        image = self._shot.toImage()
-        if box is not None:
-            scale_x = image.width() / max(1, self.width())  # the photo has real pixels (e.g. 150% scaling)
-            scale_y = image.height() / max(1, self.height())
-            real = QRect(round(box.x() * scale_x), round(box.y() * scale_y),
-                         round(box.width() * scale_x), round(box.height() * scale_y))
-            image = image.copy(real.intersected(image.rect()))
-        self._finish()
-        self.picked.emit(image)
-
-    def cancel(self) -> None:
-        self._finish()
-        self.cancelled.emit()
-
-    def _finish(self) -> None:
-        self._done = True
-        self.hide()
-        self.close()
-
-    def closeEvent(self, event) -> None:
-        if not self._done:  # closed some other way (Alt+F4): same as Esc
-            self._done = True
-            self.cancelled.emit()
-        super().closeEvent(event)
-
-    # -------------------------------------------------------------- drawing
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.drawPixmap(self.rect(), self._shot)
-        box = self.selection()
-        shade = QPainterPath()
-        shade.addRect(QRectF(self.rect()))
-        if not box.isEmpty():
-            hole = QPainterPath()
-            hole.addRect(QRectF(box))
-            shade = shade.subtracted(hole)
-        painter.fillPath(shade, QColor(14, 10, 24, 120))
-        if not box.isEmpty():
-            painter.setPen(QPen(self._accent, 2))
-            painter.drawRect(QRectF(box).adjusted(1, 1, -1, -1))
-            self._label(painter, f"{box.width()} × {box.height()}", box.bottomRight() + QPoint(-4, 18), right=True)
-        self._hint(painter, box)
-
-    def _hint(self, painter: QPainter, box: QRect) -> None:
-        font = QFont(self.font())
-        font.setPointSizeF(10.5)
-        small = QFont(font)
-        small.setPointSizeF(8.5)
-        painter.setFont(font)
-        width = min(max(painter.fontMetrics().horizontalAdvance(self.HINT) + 48, 420), self.width() - 32)
-        pill = QRectF((self.width() - width) / 2, 24, width, 56)
-        if not box.isEmpty() and pill.intersects(QRectF(box)):
-            pill.moveBottom(self.height() - 24)  # don't cover what you're choosing
+        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
         path = QPainterPath()
-        path.addRoundedRect(pill, 18, 18)
+        path.addRoundedRect(rect, rect.height() / 2, rect.height() / 2)
         painter.fillPath(path, QColor(24, 19, 34, 225))
-        painter.setPen(QPen(QColor(self._accent.red(), self._accent.green(), self._accent.blue(), 170), 1.2))
+        painter.setPen(QPen(self._accent, 1.4))
         painter.drawPath(path)
         painter.setPen(QColor(244, 238, 250))
+        font = painter.font()
+        font.setPointSizeF(8.5)
         painter.setFont(font)
-        painter.drawText(pill.adjusted(12, 8, -12, -26), Qt.AlignmentFlag.AlignCenter, self.HINT)
-        painter.setPen(QColor(244, 238, 250, 150))
-        painter.setFont(small)
-        painter.drawText(pill.adjusted(12, 30, -12, -6), Qt.AlignmentFlag.AlignCenter, self.SMALL)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self._text)
 
-    def _label(self, painter: QPainter, text: str, at: QPoint, right: bool = False) -> None:
-        metrics = painter.fontMetrics()
-        rect = QRectF(0, 0, metrics.horizontalAdvance(text) + 12, metrics.height() + 4)
-        rect.moveTopRight(at) if right else rect.moveTopLeft(at)
-        rect.moveTop(min(rect.top(), self.height() - rect.height() - 2))
-        path = QPainterPath()
-        path.addRoundedRect(rect, 6, 6)
-        painter.fillPath(path, QColor(24, 19, 34, 210))
-        painter.setPen(QColor(244, 238, 250))
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+
+def thumbnail(image: QImage, width: int = 240, height: int = 150) -> QPixmap:
+    return QPixmap.fromImage(image.scaled(width, height, Qt.AspectRatioMode.KeepAspectRatio,
+                                          Qt.TransformationMode.SmoothTransformation))

@@ -86,7 +86,7 @@ class ChatBox(QWidget):
         self.history_button.clicked.connect(self.history_requested)
         self.look_button = QToolButton(self)
         self.look_button.setIcon(_icon("eye", self._accent.darker(130)))
-        self.look_button.setToolTip(f"Show {name} your screen")
+        self.look_button.setToolTip(f"Let {name} watch your screen with you")
         self.look_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.look_button.setAutoRaise(True)
         self.look_button.clicked.connect(self.look_requested)
@@ -101,10 +101,12 @@ class ChatBox(QWidget):
         self._waiting = False
 
     def set_looking(self, looking: bool) -> None:
-        """While she can see your screenshot, an empty message means 'just have a look'."""
+        """While she watches your screen, an empty message means 'have a look at this'."""
         self._looking = looking
         self.edit.setPlaceholderText("Ask about your screen... (or just Enter)" if looking
                                      else f"Say something to {self._name}...")
+        self.look_button.setToolTip("Stop watching my screen" if looking
+                                    else f"Let {self._name} watch your screen with you")
 
     def set_waiting(self, waiting: bool) -> None:
         """While she's thinking, you can type but not send (one question at a time)."""
@@ -367,7 +369,7 @@ class ChatLogWindow(QWidget):
         self._lines: list[dict] = []
         self._pending: list[dict] = []  # sent, not answered yet (shown right away)
         self._notes: list[dict] = []    # her "can't connect" lines: shown, not saved
-        self._thumb: QPixmap | None = None  # the screenshot she can see right now
+        self._watching = False  # she's watching your screen with you (buddy mode)
 
         # --- top bar: face, name, close
         from .menu_style import Header  # same round face as in her menu
@@ -416,26 +418,21 @@ class ChatLogWindow(QWidget):
         self.column.setSpacing(6)
         self.area.setWidget(self.inner)
 
-        # --- "she can see your screenshot" bar
+        # --- "she's watching with you" bar
         self.look_bar = QWidget(self)
         look_row = QHBoxLayout(self.look_bar)
-        look_row.setContentsMargins(12, 6, 12, 0)
-        self.look_thumb = QLabel()
-        self.look_thumb.setFixedSize(48, 30)
-        self.look_thumb.setScaledContents(True)
-        self.look_thumb.setStyleSheet(f"border: 1px solid {_css(self._accent, 0.6)}; border-radius: 3px;")
-        self.look_label = QLabel(f"{name} can see your screenshot")
+        look_row.setContentsMargins(14, 6, 12, 0)
+        self.look_label = QLabel(f"👀 {name} is watching with you")
         self.look_label.setStyleSheet(f"color: {_css(INK, 0.75)}; font-size: 8.5pt;")
-        self.look_label.setToolTip("Your next questions include this picture (for 5 minutes after the last one).")
+        self.look_label.setToolTip("While she watches, your messages include what's on your screen right now.")
         self.stop_button = QToolButton()
         self.stop_button.setText("Stop")
         self.stop_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.stop_button.setToolTip("She stops looking: your next messages are text only")
+        self.stop_button.setToolTip("She stops watching your screen")
         self.stop_button.setStyleSheet(f"QToolButton {{ color: {INK.name()}; border: 1px solid {_css(self._accent, 0.5)};"
                                        f" border-radius: 9px; padding: 1px 10px; font-size: 8.5pt; }}"
                                        f" QToolButton:hover {{ background: {_css(self._accent, 0.3)}; }}")
         self.stop_button.clicked.connect(self.look_stopped)
-        look_row.addWidget(self.look_thumb)
         look_row.addWidget(self.look_label, 1)
         look_row.addWidget(self.stop_button)
         self.look_bar.hide()
@@ -446,7 +443,7 @@ class ChatLogWindow(QWidget):
         row.setContentsMargins(12, 6, 12, 12)
         self.look_button = QToolButton()
         self.look_button.setIcon(_icon("eye", INK))
-        self.look_button.setToolTip(f"Show {name} your screen")
+        self.look_button.setToolTip(f"Let {name} watch your screen with you")
         self.look_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.look_button.setStyleSheet(f"QToolButton {{ border: none; border-radius: 15px; min-width: 30px;"
                                        f" min-height: 30px; }} QToolButton:hover {{ background: {_css(self._accent, 0.3)}; }}")
@@ -490,19 +487,21 @@ class ChatLogWindow(QWidget):
         self._pending.append({"role": "user", "text": text, "time": time_text, "image": image})
         self._render()
 
-    def set_look(self, thumb: QPixmap | None) -> None:
-        """Show (or, with None, hide) the 'she can see your screenshot' bar."""
-        self._thumb = thumb
-        self.look_bar.setVisible(thumb is not None)
-        if thumb is not None:
-            self.look_thumb.setPixmap(thumb)
-        self.edit.setPlaceholderText("Ask about your screen... (or just Enter)" if thumb is not None
+    def set_watching(self, watching: bool, left: str = "") -> None:
+        """Show (or hide) the 'she's watching with you' bar. ``left``: e.g. '42 min left'."""
+        self.look_label.setText(f"👀 {self._name} is watching with you" + (f"  ·  {left}" if left else ""))
+        if watching == self._watching:
+            return
+        self._watching = watching
+        self.look_bar.setVisible(watching)
+        self.edit.setPlaceholderText("Ask about your screen... (or just Enter)" if watching
                                      else f"Say something to {self._name}...")
-        self._render()
+        self.look_button.setToolTip("Stop watching my screen" if watching
+                                    else f"Let {self._name} watch your screen with you")
 
     @property
     def looking(self) -> bool:
-        return self._thumb is not None
+        return self._watching
 
     def add_note(self, text: str) -> None:
         """Something she says that isn't part of the saved chat (e.g. 'I can't connect')."""
@@ -536,15 +535,14 @@ class ChatLogWindow(QWidget):
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             empty.setStyleSheet(f"color: {_css(INK, 0.5)}; font-size: 10pt; padding: 40px 0;")
             self.column.addWidget(empty)
-        latest_picture = max((i for i, line in enumerate(everything) if line.get("image")), default=-1)
-        for i, line in enumerate(everything):
-            self._add_bubble(line, self._thumb if i == latest_picture else None)
+        for line in everything:
+            self._add_bubble(line)
         if self._waiting:
             self._add_bubble({"role": "assistant", "text": "...", "time": "", "typing": True})
         self.column.addStretch(1)
         QTimer.singleShot(0, self._scroll_to_end)
 
-    def _add_bubble(self, line: dict, thumb: QPixmap | None = None) -> None:
+    def _add_bubble(self, line: dict) -> None:
         mine = line["role"] == "user"
         details = line.get("details", "")
         label = QLabel()
@@ -588,19 +586,13 @@ class ChatLogWindow(QWidget):
         stack = QVBoxLayout(box)
         stack.setContentsMargins(0, 0, 0, 0)
         stack.setSpacing(2)
-        if line.get("image"):  # you showed her your screen with this message
-            picture = QLabel()
-            if thumb is not None:
-                picture.setPixmap(thumb.scaled(180, 112, Qt.AspectRatioMode.KeepAspectRatio,
-                                               Qt.TransformationMode.SmoothTransformation))
-                picture.setStyleSheet(f"border: 1px solid {_css(self._accent, 0.6)}; border-radius: 4px;")
-            else:
-                picture.setText("📷 your screen")
-                picture.setStyleSheet(f"color: {_css(INK, 0.55)}; font-size: 8pt; padding: 0 4px;")
-            picture.setAlignment(Qt.AlignmentFlag.AlignRight)
-            stack.addWidget(picture, 0, Qt.AlignmentFlag.AlignRight)
         stack.addLayout(holder)
         extra = [line.get("time", "")]
+        if line.get("image"):
+            extra.append("👀 with your screen")
+        if line.get("about"):  # she spoke up by herself about what you opened
+            about = line["about"]
+            extra.append("👀 " + (about if len(about) <= 52 else about[:50].rstrip() + "…"))
         extra += [f"⏰ {when}: {what}" for when, what in line.get("reminders", [])]
         extra = "   ".join(x for x in extra if x)
         if extra:

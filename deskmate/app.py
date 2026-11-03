@@ -206,9 +206,12 @@ class Controller:
         self._chat_box = None
         self._chat_log = None
         self._chat_worker = None
-        self._picker = None      # the "drag over what I should look at" overlay, while it's open
-        self._look_thumb = None  # small picture of what she's looking at (for the chat windows)
-        self._grab_screen = lambda screen: screen.grabWindow(0)  # tests swap in a fake screen
+        self.watch = None  # buddy mode: set while she watches your screen with you (see start_watching)
+        from .activity import foreground
+        from .look import grab_screen
+
+        self._read_activity = foreground  # tests swap these two for pretend ones
+        self._grab_screen = grab_screen
         self.chat = self._make_chat()
         from .reminders import ReminderBook
 
@@ -284,8 +287,11 @@ class Controller:
         except Exception:  # never let one bad tick kill her; it's logged
             log.exception("Brain tick failed")
         self._check_reminders(now)
-        if self._look_thumb is not None and self.chat.seeing is None:
-            self._show_look(None)  # five quiet minutes: she stopped looking by herself
+        if self.watch is not None:
+            try:
+                self._watch_tick(now)
+            except Exception:  # buddy mode must never break her
+                log.exception("Watching failed")
         self._apply(now)
 
     def _apply(self, now: float) -> None:
@@ -303,7 +309,7 @@ class Controller:
                 except Exception:  # her voice must never break her
                     log.exception("Voice failed")
         if self.tray is not None:
-            tip = f"{self.pack.name} is {self.brain.label(now)}"
+            tip = f"{self.pack.name} is {self.brain.label(now)}" + (" · watching with you" if self.watch else "")
             if tip != self._tooltip:
                 self._tooltip = tip
                 self.tray.setToolTip(tip)
@@ -378,8 +384,9 @@ class Controller:
             self._chat_box = ChatBox(self.pack.name, self.pack.theme)
             self._chat_box.sent.connect(self._on_chat_sent)
             self._chat_box.history_requested.connect(self.open_chat_log)
-            self._chat_box.look_requested.connect(self.look_at_screen)
-        self._chat_box.set_looking(self._look_thumb is not None)
+            self._chat_box.look_requested.connect(self.toggle_watching)
+            self._protect(self._chat_box)
+        self._chat_box.set_looking(self.watch is not None)
         if self._chat_worker is None:
             self._chat_worker = Background()
         sprite = self.companion._sprite_rect_local()
@@ -391,21 +398,38 @@ class Controller:
 
         from .chat import LOOK_TEXT, situation
 
-        looking = self.chat.seeing is not None
-        text = text.strip() or (LOOK_TEXT if looking else "")
+        watch = self.watch
+        activity = self._read_activity() if watch is not None else None
+        private = activity is not None and activity.private
+        with_picture = watch is not None and watch.picture and not private
+        text = text.strip() or (LOOK_TEXT if watch is not None else "")
         if not text:
             return
         now = time.monotonic()
+        if watch is not None:
+            watch.watcher.hold(now)  # you're talking: no buddy comments for a while
         self.brain.on_chat_sent(now)
         self._apply(now)
         self.bubble.say("...", 60, self.companion.head_rect_global(), self.companion.available_rect())
         self._set_chat_waiting(True)
         if self._chat_log is not None:
-            self._chat_log.add_pending(text, datetime.now().strftime("%H:%M"), image=looking)
+            self._chat_log.add_pending(text, datetime.now().strftime("%H:%M"), image=with_picture)
         worked = (now - self.brain._active_since) / 60.0
         context = situation(datetime.now(), self.brain.label(now), worked)
+        if watch is not None:
+            context += "\n" + self._watch_context(activity)
         session = self.chat
-        self._chat_worker.run(lambda: session.ask(text, context), self._on_chat_reply)
+
+        def ask(image) -> None:
+            from .look import snapshot_from
+
+            snapshot = snapshot_from(image) if image is not None else None
+            self._chat_worker.run(lambda: session.ask(text, context, snapshot), self._on_chat_reply)
+
+        if with_picture:
+            self._capture(ask)
+        else:
+            ask(None)
 
     def _on_chat_reply(self, ok: bool, value) -> None:
         from .chat import OFFLINE_LINES, ChatError
@@ -546,10 +570,10 @@ class Controller:
             self._chat_log = ChatLogWindow(self.pack.name, self.pack.theme, self.icon.pixmap(96),
                                            smooth=self.pack.meta.get("smooth", True))
             self._chat_log.sent.connect(self._on_chat_log_sent)
-            self._chat_log.look_requested.connect(self.look_at_screen)
-            self._chat_log.look_stopped.connect(self.stop_looking)
-        if self._chat_log.looking != (self._look_thumb is not None):
-            self._chat_log.set_look(self._look_thumb)
+            self._chat_log.look_requested.connect(self.toggle_watching)
+            self._chat_log.look_stopped.connect(self.stop_watching)
+            self._protect(self._chat_log)
+        self._chat_log.set_watching(self.watch is not None, self.watch.left(time.monotonic()) if self.watch else "")
         if self._chat_worker is None:
             self._chat_worker = Background()
         if not self.companion.isVisible():
@@ -566,72 +590,209 @@ class Controller:
             return
         self._on_chat_sent(text)
 
-    # ----------------------------------------------------------- look at screen
-    def look_at_screen(self) -> None:
-        """Menu: 'Look at my screen'. She turns invisible, you drag over a part, she looks."""
+    # ---------------------------------------------------- buddy mode (watching)
+    WATCH_POLL = 2.0     # seconds between "what are you on?" checks (free: just a window title)
+    AWAY_SECONDS = 120   # no comments while you're away from the PC
+
+    def toggle_watching(self) -> None:
+        """Menu / 👁 button: start watching (asks permission first) or stop."""
+        if self.watch is not None:
+            self.stop_watching()
+        else:
+            self.start_watching()
+
+    def start_watching(self) -> bool:
+        """Ask permission, then she watches what you do and reacts like a buddy."""
+        from .activity import Watcher
+        from .look import WatchBadge, WatchDialog
+
+        if self.watch is not None:
+            return True
+        if self.chat.config.needs_key and not self.chat.config.api_key and not self.open_chat_settings():
+            return False
+        dialog = WatchDialog(self.pack.name, self.settings)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return False
+        self._set("watch_minutes", dialog.minutes)
+        self._set("watch_picture", dialog.with_picture)
+        self._set("watch_level", dialog.chattiness)
+        now = time.monotonic()
+        badge = WatchBadge(self.pack.name, self._accent)
+        badge.clicked.connect(self.stop_watching)
+        self.watch = _Watch(until=now + dialog.minutes * 60 if dialog.minutes else None,
+                            picture=dialog.with_picture, watcher=Watcher.with_chattiness(dialog.chattiness),
+                            badge=badge)
+        self.watch.watcher.hold(now - self.watch.watcher.gap + 45)  # first comment after ~45 s at the earliest
+        self.watch.excluded = all([self._protect(w) for w in self._our_windows()])
+        log.info("Buddy mode on (%s, picture %s, %s; hidden from capture: %s)", dialog.minutes or "no limit",
+                 dialog.with_picture, dialog.chattiness, self.watch.excluded)
+        self._show_watching(now)
+        self._event(lambda t: self.brain.say(t, "Yay~ I'll keep you company! Just do your thing, "
+                                                "I'll say something if I see something fun.", "happy"))
+        return True
+
+    def stop_watching(self, reason: str = "manual") -> None:
+        from .look import exclude_from_capture
+
+        watch, self.watch = self.watch, None
+        if watch is None:
+            return
+        for window in self._our_windows() + [watch.badge]:
+            exclude_from_capture(window, False)  # your own screenshots / recordings show her again
+        watch.badge.hide()
+        watch.badge.deleteLater()
+        self._show_watching(time.monotonic())
+        log.info("Buddy mode off (%s)", reason)
+        if reason == "manual":
+            self._event(lambda t: self.brain.say(t, "Okay~ I stopped watching your screen.", "talk"))
+        elif reason == "expired":
+            self._event(lambda t: self.brain.say(t, "Time's up~ I stopped watching your screen. Call me again anytime!",
+                                                 "happy"))
+
+    def _our_windows(self) -> list:
+        windows = [self.companion, self.bubble, self._chat_box, self._chat_log]
+        if self.watch is not None:
+            windows.append(self.watch.badge)
+        return [w for w in windows if w is not None]
+
+    def _protect(self, window) -> bool:
+        """While she watches: keep this window of ours out of her screen pictures."""
+        from .look import exclude_from_capture
+
+        return self.watch is not None and exclude_from_capture(window, True)
+
+    def _show_watching(self, now: float) -> None:
+        on = self.watch is not None
+        left = self.watch.left(now) if on else ""
+        if self._chat_log is not None:
+            self._chat_log.set_watching(on, left)
+        if self._chat_box is not None:
+            self._chat_box.set_looking(on)
+
+    def _body_rect(self):
+        from PySide6.QtCore import QRect
+
+        sprite = self.companion._sprite_rect_local()
+        return QRect(self.companion.mapToGlobal(sprite.topLeft()), sprite.size())
+
+    def _watch_context(self, activity) -> str:
+        if activity is None:
+            return "They're letting you watch their screen with them."
+        if activity.private:
+            return "They're letting you watch their screen, but right now it's something private: don't ask about it."
+        return f"They're letting you watch their screen with them. Right now they're on: {activity.describe()}."
+
+    def _watch_tick(self, now: float) -> None:
+        watch = self.watch
+        if watch.until is not None and now >= watch.until:
+            self.stop_watching("expired")
+            return
+        visible = self.companion.isVisible()
+        if visible:
+            watch.badge.place(self._body_rect())
+            watch.badge.set_left(watch.left(now))
+            if not watch.badge.isVisible():
+                watch.badge.show()
+        elif watch.badge.isVisible():
+            watch.badge.hide()
+        if now - watch.polled < self.WATCH_POLL:
+            return
+        watch.polled = now
+        if self._chat_log is not None and self._chat_log.isVisible():
+            self._chat_log.set_watching(True, watch.left(now))
+        activity = self._read_activity()
+        target = watch.watcher.observe(now, activity)
+        busy = (watch.reacting or (self._chat_worker is not None and self._chat_worker.busy)
+                or now < getattr(self.brain, "_chatting_until", 0))
+        if target is None or busy or not visible or self.brain.asleep or self.idle.seconds() > self.AWAY_SECONDS:
+            return
+        self._react_to(target)
+
+    def _react_to(self, activity) -> None:
+        from datetime import datetime
+
+        from .chat import situation
+        from .chatbox import Background
+        from .look import snapshot_from
+
+        watch = self.watch
+        watch.reacting = True
+        if self._chat_worker is None:
+            self._chat_worker = Background()
+        now = time.monotonic()
+        context = situation(datetime.now(), self.brain.label(now), (now - self.brain._active_since) / 60.0)
+        session = self.chat
+        log.info("Buddy mode: asking her about %s", activity.app)
+
+        def go(image) -> None:
+            snapshot = snapshot_from(image, 1280) if image is not None else None
+            self._chat_worker.run(lambda: session.react(activity.describe(), context, snapshot),
+                                  lambda ok, value: self._on_react(activity, ok, value))
+
+        if watch.picture:
+            self._capture(go)
+        else:
+            go(None)
+
+    def _on_react(self, activity, ok: bool, value) -> None:
+        from .chat import OFFLINE_LINES, ChatError
+
+        watch = self.watch
+        if watch is None:
+            return  # stopped while she was thinking
+        watch.reacting = False
+        now = time.monotonic()
+        watch.watcher.mentioned(now, activity, spoke=bool(ok and value))
+        if not ok:
+            kind = value.kind if isinstance(value, ChatError) else "server"
+            log.warning("Buddy comment failed (%s): %s", kind, getattr(value, "detail", value))
+            if kind == "vision":  # this model can't see: carry on with app names only
+                watch.picture = False
+                self._event(lambda t: self.brain.say(t, "My eyes don't work with this chat model... "
+                                                        "I'll just go by the app names~", "pouty"))
+            elif kind in ("no_key", "auth", "quota"):
+                self.stop_watching("error")
+                self._event(lambda t: self.brain.say(t, OFFLINE_LINES[kind], "pouty"))
+            return
+        if not value:
+            return  # nothing worth saying: she stays quiet
+        mood, reply = value
+        if self._chat_log is not None and self._chat_log.isVisible():
+            self._chat_log.set_lines(self.chat.transcript())
+        self.brain.on_chat_reply(now, mood, reply)
+        self._apply(now)
+
+    def _capture(self, then) -> None:
+        """Take a picture of the screen you're on (without her in it), then call ``then(image or None)``."""
         from PySide6.QtCore import QTimer
+        from PySide6.QtGui import QCursor, QGuiApplication
 
         from .look import HIDE_MS
 
-        if self._picker is not None:
-            return
-        if self.chat.config.needs_key and not self.chat.config.api_key and not self.open_chat_settings():
-            return
-        self._hidden_for_look = [w for w in (self.companion, self.bubble, self._chat_box, self._chat_log)
-                                 if w is not None and w.isVisible()]
-        for window in self._hidden_for_look:
-            window.setWindowOpacity(0.0)  # not hide(): she keeps her place, she's just not in the photo
-        self._picker = True  # taken: no second picker while this one is on its way
-        QTimer.singleShot(HIDE_MS, self._open_picker)
-
-    def _open_picker(self) -> None:
-        from PySide6.QtGui import QCursor, QGuiApplication
-
-        from .look import ScreenPicker
-
         screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
-        try:
-            shot = self._grab_screen(screen)
-        except Exception:
-            log.exception("Couldn't take a screenshot")
-            shot = None
-        if shot is None or shot.isNull():
-            self._end_look()
-            self._event(lambda now: self.brain.say(now, "Hmm, I couldn't see your screen... sorry!", "pouty"))
+
+        def grab():
+            try:
+                image = self._grab_screen(screen)
+                return None if image is None or image.isNull() else image
+            except Exception:
+                log.exception("Couldn't take a screen picture")
+                return None
+
+        if self.watch is not None and self.watch.excluded:
+            then(grab())  # Windows keeps her out of the picture: no need to hide
             return
-        self._picker = ScreenPicker(shot, screen.geometry(), self._accent)
-        self._picker.picked.connect(self._on_look_picked)
-        self._picker.cancelled.connect(self._end_look)
-        self._picker.open()
+        hidden = [w for w in self._our_windows() if w.isVisible()]
+        for window in hidden:
+            window.setWindowOpacity(0.0)  # not hide(): she keeps her place, she's just not in the photo
 
-    def _end_look(self) -> None:
-        self._picker = None
-        for window in getattr(self, "_hidden_for_look", []):
-            window.setWindowOpacity(1.0)
-        self._hidden_for_look = []
+        def later() -> None:
+            image = grab()
+            for window in hidden:
+                window.setWindowOpacity(1.0)
+            then(image)
 
-    def _on_look_picked(self, image) -> None:
-        from .look import snapshot_from, thumbnail
-
-        self._end_look()
-        snapshot = snapshot_from(image)
-        log.info("Showing her a %dx%d screenshot (%d KB)", snapshot.width, snapshot.height, len(snapshot.data) // 1024)
-        self.chat.show(snapshot)
-        self._show_look(thumbnail(image))
-        self.open_chat_log()
-        self._event(lambda now: self.brain.say(now, "Ooh, lemme see~ What should I look at? (Or just press Enter.)",
-                                               "surprised"))
-
-    def stop_looking(self) -> None:
-        self.chat.stop_looking()
-        self._show_look(None)
-
-    def _show_look(self, thumb) -> None:
-        self._look_thumb = thumb
-        if self._chat_log is not None:
-            self._chat_log.set_look(thumb)
-        if self._chat_box is not None:
-            self._chat_box.set_looking(thumb is not None)
+        QTimer.singleShot(HIDE_MS, later)
 
     def open_chat_settings(self) -> bool:
         """Menu: the Chat settings dialog. Returns True if saved."""
@@ -651,11 +812,9 @@ class Controller:
         elif dialog.key.text().strip():
             save_key(secrets, dialog.key.text(), KEY_NAMES[provider])
         self.settings.save()
-        history, seeing = self.chat.history, self.chat.seeing
+        history = self.chat.history
         self.chat = self._make_chat()
         self.chat.history = history
-        if seeing is not None:
-            self.chat.show(seeing)
         self.speaker.openai.config.api_key = load_key(secrets)
         log.info("Chat settings saved (provider %s)", provider)
         return True
@@ -735,7 +894,7 @@ class Controller:
             self.act_update.setText(f"Update to {self._update.version}...")
         self.act_chat = action(f"Chat with {name}...", self.open_chat, "chat")
         self.act_chat_log = action("Today's chat", self.open_chat_log, "clock")
-        self.act_look = action("Look at my screen...", self.look_at_screen, "eye")
+        self.act_look = action("Watch with me...", self.toggle_watching, "eye")
         self.act_talk = action("Talk to me", lambda: self._event(self.brain.on_talk_request), "sparkle")
         self.act_walk = action("Take a walk", self.take_walk, "walk")
         self.act_sleep = action("Go to sleep", self._toggle_sleep, "moon")
@@ -874,9 +1033,9 @@ class Controller:
         from PySide6.QtCore import QTimer
 
         QTimer.singleShot(0, self._rebuild_menu)
+        self.stop_watching("switch")  # a new character asks for her own permission
         self._set("character", pack.id)
         self.chat = self._make_chat()
-        self._look_thumb = None  # a new character hasn't seen your screen
         for attr in ("_chat_box", "_chat_log"):
             window = getattr(self, attr)
             if window is not None:
@@ -899,6 +1058,7 @@ class Controller:
         self.act_toggle.setText(f"Hide {self.pack.name}" if visible else f"Show {self.pack.name}")
         self.act_toggle.setIcon(icon("eye-off" if visible else "eye", ink))
         self.act_chat.setText(f"Chat with {self.pack.name}...")
+        self.act_look.setText("Stop watching my screen" if self.watch else "Watch with me...")
         self.act_sleep.setText("Wake up" if self.brain.asleep else "Go to sleep")
         self.act_sleep.setIcon(icon("sun" if self.brain.asleep else "moon", ink))
         count = len(self.reminders.upcoming())
@@ -1099,6 +1259,7 @@ class Controller:
         self._save_timer.stop()
         self.settings.save()
         self.bubble.dismiss()
+        self.stop_watching("quit")
         for window in (self._chat_box, self._chat_log):
             if window is not None:
                 window.hide()
@@ -1131,3 +1292,22 @@ class Controller:
         for size in (16, 20, 24, 32, 48, 64, 128, 256):
             icon.addPixmap(QPixmap.fromImage(face.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, how)))
         return icon
+
+
+class _Watch:
+    """Buddy mode's state while it's on."""
+
+    def __init__(self, until, picture: bool, watcher, badge):
+        self.until = until          # time.monotonic() when it ends, or None (until you stop it)
+        self.picture = picture      # may she see the screen itself, or only app names?
+        self.watcher = watcher      # activity.Watcher: decides when a comment is due
+        self.badge = badge          # the 👀 pill beside her
+        self.excluded = False       # Windows keeps her windows out of screen pictures
+        self.reacting = False       # waiting for her brain's comment
+        self.polled = -1e9
+
+    def left(self, now: float) -> str:
+        if self.until is None:
+            return ""
+        minutes = max(0, int((self.until - now) / 60 + 0.99))
+        return f"{minutes} min left"

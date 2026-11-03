@@ -7,10 +7,12 @@ Works with any server that speaks the OpenAI "chat completions" protocol:
 
 and with Anthropic's Claude (its own "messages" protocol, also handled here).
 
-She can also *look*: :meth:`ChatSession.show` hands her a screenshot, which goes along with
-your next questions for a few minutes (``LOOK_SECONDS``), and her answer then comes in two
-parts: a short line for her speech bubble, and the real help (steps, an example, or a
-question back) for the chat log.
+Buddy mode (when you let her watch your screen): :meth:`ChatSession.react` asks for one
+friendly line about what you just opened ("Ooh, lo-fi~ study playlist?"), and while she's
+watching, :meth:`ChatSession.ask` sends what's on your screen right now along with your
+message. If you ask for help with something on screen, her answer comes in two parts: a
+short line for her speech bubble, and the real help (steps, an example, or a question back)
+for the chat log.
 
 The window code calls :meth:`ChatSession.ask` on a background thread, so a slow
 network never freezes her. Everything she needs to stay in character (who she is,
@@ -24,7 +26,6 @@ import json
 import logging
 import os
 import re
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -48,8 +49,7 @@ MAX_REPLY_CHARS = 260
 MAX_DETAILS_CHARS = 1800
 TIMEOUT = 45.0
 LOOK_TIMEOUT = 90.0  # reading a picture takes longer
-LOOK_SECONDS = 5 * 60  # after you show her your screen, follow-up questions still include it this long
-LOOK_TEXT = "Can you take a look at this?"  # what you "say" if you just press Enter
+LOOK_TEXT = "Can you take a look at this?"  # what you "say" if you just press Enter while she watches
 
 _MOOD_TAG = re.compile(r"^\s*\[(\w+)\]\s*")
 _REMIND_TAG = re.compile(r"<remind\s+when\s*=\s*[\"']([^\"'<>]{1,40})[\"']\s*>(.{0,200}?)</remind>", re.I | re.S)
@@ -195,9 +195,10 @@ def persona_prompt(pack_meta: dict, name: str) -> str:
 
 
 LOOK_PROMPT = """\
-The user is showing you a screenshot of their screen (it is attached to their message). Look at it carefully, \
-like a friend sitting right next to them, and help the way a good partner would.
-For this reply the format changes. Write two parts, separated by a line with only --- on it.
+The user is letting you watch their screen with them (they turned this on). The picture attached to their \
+message is what's on their screen right now. Use it whenever it helps, like a friend sitting right next to them.
+If they just chat, reply normally (1 or 2 short sentences).
+If they ask for help with something on the screen, write two parts, separated by a line with only --- on it.
 Part 1: your mood tag, then 1 or 2 short sentences for your speech bubble: what you noticed and your main point.
 Part 2: the real help, in plain text (no headings, no bold). Pick what fits best:
 - Something is wrong (an error, a bug, a typo, a confusing setting): say what it is and why, then guide \
@@ -208,6 +209,16 @@ instead of guessing (you can still say what you would check first).
 Keep part 2 under about 150 words. Quote text exactly as it appears on the screen and never pretend to see \
 something that isn't there. If you notice passwords, keys or private messages, don't repeat them.
 Stay in character the whole time."""
+
+BUDDY_PROMPT = """\
+You are watching the user's screen with them as their buddy (they turned this on). They didn't say anything: \
+they just switched to something new, described below (and attached as a picture, if there is one).
+Say ONE short, natural line about it, like a friend sitting beside them would: notice it, react, or ask a light \
+question. Be specific to what you actually see (the song, the video, the game, the file), for example \
+"[happy] Ooh, lo-fi beats~ is this your study playlist?" or "[surprised] Whoa, a red error! Want me to look?"
+Don't lecture, don't list things, don't offer help unless something is clearly wrong. Vary what you say.
+If there's nothing nice or useful to say, or it looks private (messages, email, banking, passwords, \
+personal photos), reply with exactly [skip] and nothing else. Never read out private details."""
 
 
 @dataclass(frozen=True)
@@ -316,13 +327,10 @@ class ChatSession:
     persona: str
     path: Path | None = None
     today: Callable[[], date] = date.today
-    clock: Callable[[], float] = time.monotonic
     history: list[dict] = field(default_factory=list)
     last_reminders: list[tuple[str, str]] = field(default_factory=list, init=False, repr=False)
     last_details: str = field(default="", init=False, repr=False)
     _day: date | None = field(default=None, init=False, repr=False)
-    _seeing: Snapshot | None = field(default=None, init=False, repr=False)
-    _seen_at: float = field(default=0.0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._day = self.today()
@@ -351,75 +359,78 @@ class ChatSession:
         except OSError:
             log.warning("Could not save chat history", exc_info=True)
 
-    # ------------------------------------------------------------- looking
-    def show(self, snapshot: Snapshot) -> None:
-        """She sees this picture with your next questions (for ``LOOK_SECONDS`` after the last one)."""
-        self._seeing = snapshot
-        self._seen_at = self.clock()
-
-    @property
-    def seeing(self) -> Snapshot | None:
-        if self._seeing is not None and self.clock() - self._seen_at > LOOK_SECONDS:
-            self._seeing = None  # it's been a while: she stops looking (and stops sending it)
-        return self._seeing
-
-    def stop_looking(self) -> None:
-        self._seeing = None
-
     # ----------------------------------------------------------------- chat
-    def messages(self, user_text: str, context: str = "", snapshot: Snapshot | None = None) -> list[dict]:
+    def messages(self, user_text: str, context: str = "", snapshot: Snapshot | None = None,
+                 extra: str = "") -> list[dict]:
         if self.today() != self._day:  # a new day: a fresh start (she was up all night with you?)
             self._day = self.today()
             self.history = []
-        system = self.persona + ("\n" + context if context else "") + ("\n" + LOOK_PROMPT if snapshot else "")
-        recent = [{"role": m["role"], "content": ("(showing you my screen) " if m.get("image") else "") + m["content"]}
+        system = "\n".join(part for part in (self.persona, context, extra) if part)
+        recent = [{"role": m["role"], "content": ("(my screen was attached) " if m.get("image") else "") + m["content"]}
                   for m in self.history[-HISTORY_TURNS:]]
         last = (image_message(user_text, snapshot, self.config.provider) if snapshot
                 else {"role": "user", "content": user_text})
         return [{"role": "system", "content": system}, *recent, last]
 
-    def ask(self, user_text: str, context: str = "") -> tuple[str, str]:
-        """Blocking call (run it on a thread). Returns (mood, reply) or raises ChatError.
-
-        If she's looking at a screenshot, it goes along, and the longer help she writes
-        ends up in ``last_details`` (and in the chat log).
-        """
-        snapshot = self.seeing
-        user_text = user_text.strip()[:1000] or (LOOK_TEXT if snapshot else "...")
-        asked_at = datetime.now().strftime("%H:%M")
+    def _complete(self, messages: list[dict], picture: bool) -> str:
         config = self.config
         if not config.model:
             config.model = pick_model(list_models(config), config.provider)
             if not config.model:
                 raise ChatError("model", "no chat model found")
             log.info("Chat model picked automatically: %s", config.model)
-        messages = self.messages(user_text, context, snapshot)
-        timeout = LOOK_TIMEOUT if snapshot else TIMEOUT
+        timeout = LOOK_TIMEOUT if picture else TIMEOUT
         try:
             if config.provider == "claude":  # Anthropic: the persona goes in "system", answers come in blocks
-                payload = {"model": config.model, "max_tokens": 1200 if snapshot else 400,
+                payload = {"model": config.model, "max_tokens": 1200 if picture else 400,
                            "system": messages[0]["content"], "messages": messages[1:]}
                 data = _request(config, "/messages", payload, timeout=timeout)
-                raw = "".join(block.get("text", "") for block in data["content"] if block.get("type") == "text")
-            else:
-                data = _request(config, "/chat/completions", {"model": config.model, "messages": messages},
-                                timeout=timeout)
-                raw = data["choices"][0]["message"]["content"] or ""
+                return "".join(block.get("text", "") for block in data["content"] if block.get("type") == "text")
+            data = _request(config, "/chat/completions", {"model": config.model, "messages": messages},
+                            timeout=timeout)
+            return data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError, AttributeError):
             raise ChatError("server", "unexpected reply") from None
+
+    def ask(self, user_text: str, context: str = "", snapshot: Snapshot | None = None) -> tuple[str, str]:
+        """Blocking call (run it on a thread). Returns (mood, reply) or raises ChatError.
+
+        ``snapshot``: what's on your screen right now (only while she's watching). If you ask
+        for help with it, the longer help she writes ends up in ``last_details`` (and the chat log).
+        """
+        user_text = user_text.strip()[:1000] or (LOOK_TEXT if snapshot else "...")
+        asked_at = datetime.now().strftime("%H:%M")
+        raw = self._complete(self.messages(user_text, context, snapshot, LOOK_PROMPT if snapshot else ""),
+                             snapshot is not None)
         raw, self.last_reminders = extract_reminders(raw)
         head, details = split_look_reply(raw) if snapshot else (raw, "")
         mood, reply = parse_reply(head)
         self.last_details = details
-        if snapshot:
-            self._seen_at = self.clock()  # still talking about it: keep looking a while longer
         noted = "".join(f' <remind when="{when}">{what}</remind>' for when, what in self.last_reminders)
-        sent_at, replied_at = asked_at, datetime.now().strftime("%H:%M")
-        mine = {"role": "user", "content": user_text, "time": sent_at}
+        mine = {"role": "user", "content": user_text, "time": asked_at}
         if snapshot:
             mine["image"] = True
         answer = f"[{mood}] {reply}{noted}" + (f"\n---\n{details}" if details else "")
-        self.history += [mine, {"role": "assistant", "content": answer, "time": replied_at}]
+        self.history += [mine, {"role": "assistant", "content": answer, "time": datetime.now().strftime("%H:%M")}]
+        self._save()
+        return mood, reply
+
+    def react(self, activity: str, context: str = "", snapshot: Snapshot | None = None) -> tuple[str, str] | None:
+        """Buddy mode: one line about what you just opened, or None if she has nothing to say.
+
+        Blocking (run it on a thread). What she said is kept in today's chat, so you can answer her.
+        """
+        note = f"(I just switched to: {activity[:200]})"
+        raw = self._complete(self.messages(note, context, snapshot, BUDDY_PROMPT), snapshot is not None)
+        if not raw.strip() or "[skip]" in raw.lower():
+            return None
+        raw, _ = extract_reminders(raw)
+        mood, reply = parse_reply(_DETAILS_SPLIT.split(raw.strip(), maxsplit=1)[0])
+        if reply in ("", "..."):
+            return None
+        now = datetime.now().strftime("%H:%M")
+        self.history += [{"role": "user", "content": note, "time": now, "peek": True},
+                         {"role": "assistant", "content": f"[{mood}] {reply}", "time": now, "about": activity[:200]}]
         self._save()
         return mood, reply
 
@@ -429,6 +440,8 @@ class ChatSession:
             return []
         lines = []
         for message in self.history:
+            if message.get("peek"):
+                continue  # her own glance, not something you said: her line shows what it was about
             if message["role"] == "user":
                 lines.append({"role": "user", "text": message["content"], "time": message.get("time", ""),
                               "image": bool(message.get("image"))})
@@ -437,7 +450,7 @@ class ChatSession:
                 raw, reminders = extract_reminders(head)
                 mood, text = parse_reply(raw)
                 lines.append({"role": "assistant", "text": text, "mood": mood, "time": message.get("time", ""),
-                              "reminders": reminders, "details": details})
+                              "reminders": reminders, "details": details, "about": message.get("about", "")})
         return lines
 
     def forget(self) -> None:

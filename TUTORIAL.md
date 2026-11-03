@@ -27,7 +27,7 @@
 | 6 | [Never break, never get lost](#6---never-break-never-get-lost) | `settings.py`, `app.py` | Atomic saves, screen clamping, logging, one instance |
 | 7 | [Character packs](#7---character-packs) | `character.py`, `tools/` | Validating input, and how the image clean-up works |
 | 8 | [Bringing her to life](#8---bringing-her-to-life) | `companion.py`, `brain.py` | Blinking, gravity, throwing, wandering, frame-rate-proof physics |
-| 9 | [Talking with AI](#9---talking-with-ai) | `chat.py`, `chatbox.py`, `look.py` | OpenAI, Claude and Ollama, threads, prompts, showing her pictures, testing with a fake server |
+| 9 | [Talking with AI](#9---talking-with-ai) | `chat.py`, `chatbox.py`, `activity.py`, `look.py` | OpenAI, Claude and Ollama, threads, prompts, buddy mode, testing with a fake server |
 | 10 | [Shipping it](#10---shipping-it) | `packaging/`, `.github/workflows/` | PyInstaller, an installer, and CI/CD with GitHub Actions |
 | 11 | [Your turn](#11---your-turn) | | Challenges with hints |
 
@@ -397,24 +397,35 @@ Two small ideas keep it pleasant:
 
 `Speaker` never touches Qt or the sound card directly: it's given the engines and a "run this in the background" function. So the tests hand it fake engines and check *what* she would say, without making a sound.
 
-### Showing her your screen: a picture in a chat
+### Buddy mode: she watches with you
 
-"Look at my screen" is four small steps, each in the file that's best at it:
+The idea: she notices what you're doing and reacts like a friend next to you. It's built from four small pieces, each easy to test on its own:
 
 ```mermaid
 flowchart LR
-    A[Menu: Look at my screen] --> B[She turns invisible<br/>app.py]
-    B --> C[Photo + drag a box<br/>look.py]
-    C --> D[Shrink + JPEG<br/>look.snapshot_from]
-    D --> E[Picture + question<br/>chat.py]
-    E --> F[Bubble line + help<br/>chatbox.py]
+    A[activity.foreground<br/>app + window title] --> B[Watcher<br/>is a comment due?]
+    B -->|yes| C[screen picture<br/>look.py]
+    C --> D[ChatSession.react<br/>one line or skip]
+    D --> E[her bubble]
 ```
 
-**Getting out of her own photo.** She's always on top, so a plain screenshot would have her in it. Instead of `hide()` (which would make her land, forget her perch, etc.) the app sets `windowOpacity(0)` on her, her bubble and the chat windows, waits 250 ms for Windows to redraw, and takes the photo with `QScreen.grabWindow(0)`.
+**1. What are you on? (free, local)** Every 2 seconds `activity.foreground()` asks Windows for the window you're using: `GetForegroundWindow` → `GetWindowTextW` for the title, and `QueryFullProcessImageNameW` for the program. `make_activity()` turns `chrome.exe` + `"lofi hip hop radio - YouTube - Google Chrome"` into `Activity("Chrome", "lofi hip hop radio - YouTube")`. The window title alone already says a lot, costs nothing, and never leaves your PC.
 
-**Logical vs real pixels.** At 150 % scaling, a box you drag from (100, 100) to (300, 250) is 200 × 150 *logical* pixels but 300 × 225 *real* pixels in the photo. `ScreenPicker.choose()` scales the box by `photo width / window width` before cutting. (There was also a classic off-by-one: `QRect(corner1, corner2)` includes both corners, so it's 1 pixel too big. The test caught it.)
+**2. Is a comment due? (pure logic)** `Watcher.observe(now, activity)` is a small state machine, like the brain, tested with fake times:
 
-**Same picture, two shapes.** Every brain wants the picture inside your message, but they disagree on how:
+| Rule | Why |
+|---|---|
+| You stayed on it for 8 s (`settle`) | No comments while you Alt+Tab around |
+| `gap` since her last comment, at most `per_hour` | A buddy, not a commentator |
+| Not the same `key` in the last 30 min | `key` drops counters like `(3)`, so a new notification isn't "something new" |
+| Not `private`, not `quiet` | Incognito, password managers, banking: never. Calls: stay quiet |
+| `hold()` while you chat | She doesn't talk over you |
+
+**3. Seeing without being seen.** She's always on top, so a plain screen picture would mostly show… her. `SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)` asks Windows to leave a window out of screen captures while still showing it to you. It's switched on for all her windows only while buddy mode is on, and off again afterwards, so *your* screenshots and recordings still show her. On older systems the app falls back to making her see-through for 250 ms while the picture is taken.
+
+**4. One line, or nothing.** `ChatSession.react()` sends the picture with `BUDDY_PROMPT`: say ONE short, specific line ("Ooh, lo-fi~ is this your study playlist?"), or reply exactly `[skip]` if there's nothing worth saying. Giving the model a way to stay quiet matters as much as telling it what to say. Without it, she'd comment on every spreadsheet. Her line is saved in today's chat (with what it was about), so when you answer "yes I love it", she knows what you mean.
+
+**Same picture, two shapes.** OpenAI/Ollama and Claude both take the picture inside your message, but in different shapes:
 
 ```python
 # OpenAI and Ollama                                # Claude
@@ -424,24 +435,11 @@ flowchart LR
      {"url": "data:image/jpeg;base64,..."}}]}        {"type": "text", "text": "what's wrong?"}]}
 ```
 
-`image_message()` builds the right one. The picture rides along **only on your newest message**: older turns are sent as text (`"(showing you my screen) ..."`), so a long chat doesn't resend the same picture again and again.
+`image_message()` builds the right one. The picture rides along **only on the newest message**; older turns are sent as text, so a long chat doesn't resend old pictures.
 
-**Making her a partner, not a describer.** Ask a model "what's on this screenshot?" and you get a description of the screenshot. The look prompt (`LOOK_PROMPT`) asks for something more useful, and gives her a format:
+**Asking for help while she watches.** If you ask about something on screen, `LOOK_PROMPT` lets her answer in two parts split by `---`: one line for the bubble, then **steps**, a short **example**, or **one question back** if she can't tell what you need. `split_look_reply()` cuts it in two (and copes when the model forgets the `---`). The chat window shows the second part as rich text: `details_html()` escapes everything first, then puts code in a light box. Two Qt gotchas found on the way: `QLabel` already has a property called `text`, so `setProperty("text", ...)` silently replaced the rich text; and a rich-text label in nested layouts needs `setMinimumHeight(heightForWidth(...))`, or it's squashed to one line.
 
-```
-[surprised] Ah, a typo on line 3~ you wrote pritn!
----
-1. Go to line 3.
-2. Change pritn to print:
-    print(data.read())
-Is data.txt in the same folder as your script?
-```
-
-Above the `---`: one line for her bubble (and her voice). Below it: she picks **steps** if something's wrong, an **example** if that makes it click, or **one question back** if she can't tell. "Never pretend to see what isn't there" matters just as much: a guessed answer about your screen is worse than a question. `split_look_reply()` cuts the reply in two, and copes when the model forgets the `---` (the bubble gets the start, the chat log gets all of it).
-
-**A follow-up window.** `ChatSession.show()` stores the picture with the time. The `seeing` property returns it only if the last question about it was under 5 minutes ago, and the app's tick hides the "she can see your screenshot" bar when it expires. It's a timestamp checked when needed, not a timer to cancel: a pattern that's easy to test (the test just moves a fake clock forward 5 minutes).
-
-**Rich text in a label.** Her help can contain a code block, so that bubble uses Qt's small HTML subset: `details_html()` escapes everything first (her text is never trusted as HTML), then wraps code in a light box. Two gotchas found while building it: `QLabel` has its own Qt property called `text`, so `setProperty("text", ...)` silently replaced the rich text; and a rich-text label inside nested layouts needs `setMinimumHeight(heightForWidth(...))`, or it gets squashed to one line.
+**Permission is a feature.** `WatchDialog` asks every time (nothing is remembered as "yes forever"), the 👀 `WatchBadge` is visible the whole time and stops it with one click, and a time limit ends it by itself. Being watched should never be a surprise.
 
 ### Failing gently
 
@@ -469,7 +467,7 @@ Running from source needs Python. Real users want a download that just works. Th
 ```mermaid
 flowchart LR
     T["git push origin v0.3.0"] --> GA[GitHub Actions<br/>Windows machine]
-    GA --> TS[Run the 115 tests]
+    GA --> TS[Run the 121 tests]
     TS --> PI["PyInstaller<br/>DeskMate.exe + _internal"]
     PI --> CK["DeskMate.exe --check"]
     CK --> IS[Inno Setup<br/>installer]

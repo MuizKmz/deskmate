@@ -628,21 +628,22 @@ class QtSmokeTests(unittest.TestCase):
             controller._on_about_to_quit()
             controller.companion.close()
 
-    def test_look_at_my_screen(self):
+    def test_buddy_mode(self):
         import random
         from unittest import mock
 
-        from PySide6.QtGui import QKeyEvent, QPixmap
+        from PySide6.QtWidgets import QDialog
 
+        from deskmate.activity import Activity
         from deskmate.app import Controller
         from deskmate.brain import Brain
         from deskmate.character import load_pack
         from deskmate.companion import load_frames
-        from deskmate.look import MAX_SIDE, snapshot_from
+        from deskmate.look import MAX_SIDE, WatchDialog, snapshot_from
         from deskmate.settings import Settings
         from tests.fake_openai import FakeOpenAI
 
-        # Big screenshots are shrunk before they're sent.
+        # Big screens are shrunk before they're sent.
         big = QImage(3200, 1800, QImage.Format.Format_RGB32)
         big.fill(QColor("white"))
         snap = snapshot_from(big)
@@ -662,71 +663,99 @@ class QtSmokeTests(unittest.TestCase):
             controller.chat.config.api_key = fake.key
             controller.chat.config.base_url = fake.url
             controller.chat.config.model = "gpt-5.4-mini"
-            screens = []
+            now_on = [Activity("Chrome", "lofi hip hop radio - YouTube", "chrome")]
+            controller._read_activity = lambda: now_on[0]
+            shots = []
 
-            def fake_screen(screen):  # a pretend screen: grey, with a red "error" box
-                screens.append(screen)
-                shot = QPixmap(screen.geometry().size())
-                shot.fill(QColor("gray"))
-                painter = QPainter(shot)
-                painter.fillRect(100, 100, 200, 150, QColor("red"))
-                painter.end()
-                return shot
+            def fake_screen(screen):
+                shots.append(screen)
+                image = QImage(800, 450, QImage.Format.Format_RGB32)
+                image.fill(QColor("gray"))
+                return image
 
             controller._grab_screen = fake_screen
 
-            def picker():
-                deadline = time.monotonic() + 3
-                while not hasattr(controller._picker, "picked") and time.monotonic() < deadline:
-                    spin(0.05)
-                return controller._picker
+            # "Not now": nothing happens.
+            with mock.patch.object(WatchDialog, "exec", return_value=QDialog.DialogCode.Rejected):
+                controller.act_look.trigger()
+            self.assertIsNone(controller.watch)
 
-            # Esc cancels: she comes back and nothing changes.
-            controller.act_look.trigger()
-            self.assertEqual(controller.companion.windowOpacity(), 0.0)  # not in her own screenshot
-            picker().keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier))
-            self.assertIsNone(controller._picker)
-            self.assertEqual(controller.companion.windowOpacity(), 1.0)
-            self.assertIsNone(controller.chat.seeing)
+            # "Let her watch" for 30 minutes.
+            def allow(dialog):
+                dialog.duration.setCurrentIndex(dialog.duration.findData(30))
+                return QDialog.DialogCode.Accepted
 
-            # Drag a box over the red part.
-            controller.act_look.trigger()
-            box = picker()
-            mouse(box, QEvent.Type.MouseButtonPress, QPoint(100, 100))
-            mouse(box, QEvent.Type.MouseMove, QPoint(300, 250), Qt.MouseButton.NoButton)
-            mouse(box, QEvent.Type.MouseButtonRelease, QPoint(300, 250), buttons=Qt.MouseButton.NoButton)
-            self.assertEqual(controller.companion.windowOpacity(), 1.0)
-            seen = controller.chat.seeing
-            self.assertEqual((seen.width, seen.height), (200, 150))
+            with mock.patch.object(WatchDialog, "exec", allow):
+                controller.act_look.trigger()
+            watch = controller.watch
+            self.assertIsNotNone(watch)
+            self.assertEqual(settings["watch_minutes"], 30)
+            self.assertIn("company", controller.bubble.text)
+            controller._tick()
+            self.assertTrue(watch.badge.isVisible())
+            self.assertEqual(watch.left(time.monotonic()), "30 min left")
+
+            # She reacts to what you opened (once you've stayed on it), with a picture of the screen.
+            fake.reply = "[happy] Ooh, lo-fi~ is this your study playlist?"
+            watch.watcher.settle = 0
+            watch.watcher.hold(-1e9)
+            controller._watch_tick(time.monotonic())        # first look: "you just switched"
+            watch.polled = -1e9
+            controller._watch_tick(time.monotonic() + 1)    # still there: time for a comment
+            deadline = time.monotonic() + 10
+            while controller.bubble.text != "Ooh, lo-fi~ is this your study playlist?" and time.monotonic() < deadline:
+                spin(0.05)
+            self.assertEqual(controller.bubble.text, "Ooh, lo-fi~ is this your study playlist?")
+            sent = fake.requests[-1]["messages"]
+            self.assertIn("buddy", sent[0]["content"])
+            self.assertIn("lofi hip hop radio", sent[-1]["content"][0]["text"])
+            self.assertTrue(sent[-1]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+            self.assertEqual(controller.chat.transcript()[-1]["about"], "Chrome: lofi hip hop radio - YouTube")
+            # Same thing again: she doesn't repeat herself.
+            count = len(fake.requests)
+            watch.polled = -1e9
+            controller._watch_tick(time.monotonic() + 2)
+            spin(0.2)
+            self.assertEqual(len(fake.requests), count)
+
+            # You answer her in Today's chat: she knows what you're on and sees the screen.
+            controller.open_chat_log()
             log = controller._chat_log
-            self.assertTrue(log.isVisible())
             self.assertTrue(log.look_bar.isVisibleTo(log))
-            self.assertIn("lemme see", controller.bubble.text)
-
-            # Just Enter: "Can you take a look at this?" goes with the picture.
-            fake.reply = ("[surprised] That red box is an error~\n---\nIt says the file is missing.\n"
-                          "1. Check the path.\n```\nopen('data.txt')\n```\nWhich folder is data.txt in?")
+            fake.reply = "[blush] Ehehe, good taste~"
+            log.edit.setText("yes I love it")
             log.edit.returnPressed.emit()
             deadline = time.monotonic() + 10
             while log._waiting and time.monotonic() < deadline:
                 spin(0.05)
-            text, picture = fake.requests[-1]["messages"][-1]["content"]
-            self.assertTrue(picture["image_url"]["url"].startswith("data:image/jpeg;base64,"))
-            self.assertEqual(controller.bubble.text, "That red box is an error~")
-            self.assertEqual(log.bubble_texts(), [("user", "Can you take a look at this?"),
-                                                  ("assistant", "That red box is an error~")])
-            self.assertIn("Which folder", log.bubble_details()[0])
-            # The small chat box knows she's looking too, until you press Stop.
-            log.hide()
-            controller.open_chat()
-            self.assertIn("screen", controller._chat_box.edit.placeholderText())
-            controller._chat_box.hide()
-            controller.open_chat_log()
-            log.stop_button.click()
-            self.assertIsNone(controller.chat.seeing)
+            sent = fake.requests[-1]["messages"]
+            self.assertIn("lofi hip hop radio", sent[0]["content"])
+            self.assertIsInstance(sent[-1]["content"], list)  # with the picture
+            self.assertEqual(log.bubble_texts()[-1], ("assistant", "Ehehe, good taste~"))
+
+            # Something private: no picture is taken.
+            now_on[0] = Activity("Chrome", "Maybank2u", "chrome")
+            before = len(shots)
+            log.edit.setText("hmm")
+            log.edit.returnPressed.emit()
+            deadline = time.monotonic() + 10
+            while log._waiting and time.monotonic() < deadline:
+                spin(0.05)
+            self.assertEqual(len(shots), before)
+            self.assertIsInstance(fake.requests[-1]["messages"][-1]["content"], str)
+            self.assertIn("private", fake.requests[-1]["messages"][0]["content"])
+
+            # Clicking the badge stops it; time running out stops it too.
+            watch.badge.clicked.emit()
+            self.assertIsNone(controller.watch)
             self.assertFalse(log.look_bar.isVisibleTo(log))
-            log.edit.returnPressed.emit()  # empty Enter does nothing once she stopped looking
-            self.assertFalse(log._waiting)
+            self.assertIn("stopped watching", controller.bubble.text)
+            with mock.patch.object(WatchDialog, "exec", allow):
+                controller.toggle_watching()
+            controller.watch.until = time.monotonic() - 1
+            controller._tick()
+            self.assertIsNone(controller.watch)
+            self.assertIn("Time's up", controller.bubble.text)
             log.hide()
             controller._on_about_to_quit()
             controller.companion.close()

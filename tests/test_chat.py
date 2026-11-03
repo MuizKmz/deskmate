@@ -159,18 +159,16 @@ class ServerTests(unittest.TestCase):
     LOOK_REPLY = ("[surprised] Ah, a typo on line 3~ you wrote pritn!\n---\n"
                   "1. Click line 3.\n2. Change pritn to print:\n```python\n    print('hi')\n```\nThen run it again!")
 
-    def test_she_looks_at_your_screenshot(self):
-        now = [100.0]
+    def test_while_she_watches_your_messages_include_the_screen(self):
         session = self.session()
-        session.clock = lambda: now[0]
-        session.show(C.Snapshot(b"\xff\xd8fake-jpeg", 800, 450))
+        shot = C.Snapshot(b"\xff\xd8fake-jpeg", 800, 450)
         self.fake.reply = self.LOOK_REPLY
-        mood, reply = session.ask("")  # just pressing Enter means "have a look"
+        mood, reply = session.ask("", "Right now they're on: VS Code: main.py", shot)  # Enter = "have a look"
         self.assertEqual((mood, reply), ("surprised", "Ah, a typo on line 3~ you wrote pritn!"))
         self.assertIn("```python\n    print('hi')\n```", session.last_details)  # code keeps its indent
         sent = self.fake.requests[-1]
-        self.assertIn("screenshot", sent["messages"][0]["content"])  # the look instructions
-        self.assertIn("ask one clear question", sent["messages"][0]["content"])
+        self.assertIn("watch their screen", sent["messages"][0]["content"])  # the watching instructions
+        self.assertIn("VS Code: main.py", sent["messages"][0]["content"])
         text, picture = sent["messages"][-1]["content"]
         self.assertEqual(text, {"type": "text", "text": C.LOOK_TEXT})
         self.assertEqual(picture["image_url"]["url"], "data:image/jpeg;base64,/9hmYWtlLWpwZWc=")
@@ -180,43 +178,55 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(her["text"], reply)
         self.assertTrue(her["details"].startswith("1. Click line 3."))
         self.assertNotIn("/9hmYWtl", (self.tmp / "chat.json").read_text(encoding="utf-8"))
-        # A follow-up a minute later still includes the picture...
-        now[0] += 60
-        self.fake.reply = "[happy] Yup, exactly that one~"
-        session.ask("this line?")
-        self.assertIsInstance(self.fake.requests[-1]["messages"][-1]["content"], list)
-        self.assertEqual(self.fake.requests[-1]["messages"][1]["content"],
-                         "(showing you my screen) " + C.LOOK_TEXT)  # earlier turns: text only
+        # Just chatting while she watches: a normal reply, no help section.
+        self.fake.reply = "[happy] Ehehe, you're welcome~"
+        self.assertEqual(session.ask("thanks!", "", shot), ("happy", "Ehehe, you're welcome~"))
         self.assertEqual(session.last_details, "")
-        # ...but after 5 quiet minutes (or Stop) she's back to plain chat.
-        now[0] += C.LOOK_SECONDS + 1
-        self.assertIsNone(session.seeing)
-        session.ask("thanks!")
-        self.assertEqual(self.fake.requests[-1]["messages"][-1]["content"], "thanks!")
-        self.assertNotIn("screenshot", self.fake.requests[-1]["messages"][0]["content"])
-        session.show(C.Snapshot(b"x", 1, 1))
-        session.stop_looking()
-        self.assertIsNone(session.seeing)
+        self.assertEqual(self.fake.requests[-1]["messages"][1]["content"],
+                         "(my screen was attached) " + C.LOOK_TEXT)  # earlier turns: text only
+        # Not watching: plain chat, no picture, no watching instructions.
+        session.ask("bye")
+        self.assertEqual(self.fake.requests[-1]["messages"][-1]["content"], "bye")
+        self.assertNotIn("watch their screen", self.fake.requests[-1]["messages"][0]["content"])
+
+    def test_buddy_reactions(self):
+        session = self.session()
+        self.fake.reply = "[happy] Ooh, lo-fi beats~ is this your study playlist?"
+        said = session.react("Chrome: lofi hip hop radio - YouTube", "It is evening.", C.Snapshot(b"x", 1, 1))
+        self.assertEqual(said, ("happy", "Ooh, lo-fi beats~ is this your study playlist?"))
+        sent = self.fake.requests[-1]
+        self.assertIn("buddy", sent["messages"][0]["content"])
+        self.assertIn("[skip]", sent["messages"][0]["content"])
+        self.assertIn("lofi hip hop radio", sent["messages"][-1]["content"][0]["text"])
+        # It's part of today's chat, so you can answer her ("yes!") and she knows what about.
+        self.assertEqual(session.transcript()[-1]["about"], "Chrome: lofi hip hop radio - YouTube")
+        self.assertEqual(len(session.transcript()), 1)  # her glance isn't shown as something you said
+        self.fake.reply = "[happy] Yay, same~"
+        session.ask("yes I love it")
+        self.assertIn("lofi", self.fake.requests[-1]["messages"][1]["content"])
+        # Nothing worth saying: she stays quiet and nothing is added.
+        self.fake.reply = "[skip]"
+        self.assertIsNone(session.react("Excel: budget.xlsx"))
+        self.assertEqual(len(session.history), 4)
+        self.assertIsInstance(self.fake.requests[-1]["messages"][-1]["content"], str)  # no picture: text only
 
     def test_claude_looks_too(self):
         session = self.session(provider="claude", model="claude-haiku-5-5")
-        session.show(C.Snapshot(b"\xff\xd8fake-jpeg", 800, 450))
         self.fake.reply = self.LOOK_REPLY
-        self.assertEqual(session.ask("what's wrong?")[0], "surprised")
+        self.assertEqual(session.ask("what's wrong?", "", C.Snapshot(b"\xff\xd8fake-jpeg", 800, 450))[0], "surprised")
         sent = self.fake.requests[-1]
         picture, text = sent["messages"][-1]["content"]  # Anthropic: the picture first, then the question
         self.assertEqual(picture, {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                                 "data": "/9hmYWtlLWpwZWc="}})
         self.assertEqual(text, {"type": "text", "text": "what's wrong?"})
         self.assertGreaterEqual(sent["max_tokens"], 1000)  # room for steps and an example
-        self.assertIn("screenshot", sent["system"])
+        self.assertIn("watch their screen", sent["system"])
 
     def test_a_model_that_cant_see(self):
         session = self.session()
-        session.show(C.Snapshot(b"x", 1, 1))
         self.fake.status, self.fake.error = 400, "Invalid content type. image_url is only supported by certain models."
         with self.assertRaises(C.ChatError) as caught:
-            session.ask("look")
+            session.ask("look", "", C.Snapshot(b"x", 1, 1))
         self.assertEqual(caught.exception.kind, "vision")
 
     def test_splitting_a_look_reply(self):
