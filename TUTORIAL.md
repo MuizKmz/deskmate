@@ -27,7 +27,7 @@
 | 6 | [Never break, never get lost](#6---never-break-never-get-lost) | `settings.py`, `app.py` | Atomic saves, screen clamping, logging, one instance |
 | 7 | [Character packs](#7---character-packs) | `character.py`, `tools/` | Validating input, and how the image clean-up works |
 | 8 | [Bringing her to life](#8---bringing-her-to-life) | `companion.py`, `brain.py` | Blinking, gravity, throwing, wandering, frame-rate-proof physics |
-| 9 | [Talking with AI](#9---talking-with-ai) | `chat.py`, `chatbox.py` | One API for OpenAI and Ollama, threads, prompts, testing with a fake server |
+| 9 | [Talking with AI](#9---talking-with-ai) | `chat.py`, `chatbox.py`, `look.py` | OpenAI, Claude and Ollama, threads, prompts, showing her pictures, testing with a fake server |
 | 10 | [Shipping it](#10---shipping-it) | `packaging/`, `.github/workflows/` | PyInstaller, an installer, and CI/CD with GitHub Actions |
 | 11 | [Your turn](#11---your-turn) | | Challenges with hints |
 
@@ -318,7 +318,7 @@ Set `GRAVITY = 900.0` in `companion.py` and throw her: she floats like she's on 
 
 Phase 3 lets you type to her. Three files: `chat.py` (talks to the model, no Qt at all), `chatbox.py` (the text box and the settings dialog), and a few methods in `app.py` that connect them.
 
-### One protocol, many brains
+### Three brains, two protocols
 
 OpenAI's **chat completions** format became the common language: OpenAI speaks it, and so does Ollama on your own PC. So DeskMate needs just one function:
 
@@ -331,6 +331,18 @@ POST {url}/chat/completions
 ```
 
 Switching between OpenAI and Ollama only changes the address (`https://api.openai.com/v1` or `http://localhost:11434/v1`) and whether a key is sent. It uses Python's built-in `urllib`, so there's no new package to install.
+
+**Claude** speaks Anthropic's own *Messages* format, so `ChatSession.ask` has one small branch for it:
+
+| | OpenAI / Ollama | Claude |
+|---|---|---|
+| Address | `.../chat/completions` | `https://api.anthropic.com/v1/messages` |
+| Key | `Authorization: Bearer ...` | `x-api-key: ...` plus an `anthropic-version` header |
+| Her persona | the first message, `role: "system"` | a separate top-level `"system"` field |
+| Length limit | optional | `"max_tokens"` is required |
+| The answer | `choices[0].message.content` | `content`: a list of blocks; join the `"text"` ones |
+
+Everything around it (her mood tag, reminders, today's memory, the fake-server tests) is shared.
 
 ### Never freeze the window
 
@@ -385,9 +397,55 @@ Two small ideas keep it pleasant:
 
 `Speaker` never touches Qt or the sound card directly: it's given the engines and a "run this in the background" function. So the tests hand it fake engines and check *what* she would say, without making a sound.
 
+### Showing her your screen: a picture in a chat
+
+"Look at my screen" is four small steps, each in the file that's best at it:
+
+```mermaid
+flowchart LR
+    A[Menu: Look at my screen] --> B[She turns invisible<br/>app.py]
+    B --> C[Photo + drag a box<br/>look.py]
+    C --> D[Shrink + JPEG<br/>look.snapshot_from]
+    D --> E[Picture + question<br/>chat.py]
+    E --> F[Bubble line + help<br/>chatbox.py]
+```
+
+**Getting out of her own photo.** She's always on top, so a plain screenshot would have her in it. Instead of `hide()` (which would make her land, forget her perch, etc.) the app sets `windowOpacity(0)` on her, her bubble and the chat windows, waits 250 ms for Windows to redraw, and takes the photo with `QScreen.grabWindow(0)`.
+
+**Logical vs real pixels.** At 150 % scaling, a box you drag from (100, 100) to (300, 250) is 200 × 150 *logical* pixels but 300 × 225 *real* pixels in the photo. `ScreenPicker.choose()` scales the box by `photo width / window width` before cutting. (There was also a classic off-by-one: `QRect(corner1, corner2)` includes both corners, so it's 1 pixel too big. The test caught it.)
+
+**Same picture, two shapes.** Every brain wants the picture inside your message, but they disagree on how:
+
+```python
+# OpenAI and Ollama                                # Claude
+{"role": "user", "content": [                      {"role": "user", "content": [
+  {"type": "text", "text": "what's wrong?"},         {"type": "image", "source": {"type": "base64",
+  {"type": "image_url", "image_url":                   "media_type": "image/jpeg", "data": "..."}},
+     {"url": "data:image/jpeg;base64,..."}}]}        {"type": "text", "text": "what's wrong?"}]}
+```
+
+`image_message()` builds the right one. The picture rides along **only on your newest message**: older turns are sent as text (`"(showing you my screen) ..."`), so a long chat doesn't resend the same picture again and again.
+
+**Making her a partner, not a describer.** Ask a model "what's on this screenshot?" and you get a description of the screenshot. The look prompt (`LOOK_PROMPT`) asks for something more useful, and gives her a format:
+
+```
+[surprised] Ah, a typo on line 3~ you wrote pritn!
+---
+1. Go to line 3.
+2. Change pritn to print:
+    print(data.read())
+Is data.txt in the same folder as your script?
+```
+
+Above the `---`: one line for her bubble (and her voice). Below it: she picks **steps** if something's wrong, an **example** if that makes it click, or **one question back** if she can't tell. "Never pretend to see what isn't there" matters just as much: a guessed answer about your screen is worse than a question. `split_look_reply()` cuts the reply in two, and copes when the model forgets the `---` (the bubble gets the start, the chat log gets all of it).
+
+**A follow-up window.** `ChatSession.show()` stores the picture with the time. The `seeing` property returns it only if the last question about it was under 5 minutes ago, and the app's tick hides the "she can see your screenshot" bar when it expires. It's a timestamp checked when needed, not a timer to cancel: a pattern that's easy to test (the test just moves a fake clock forward 5 minutes).
+
+**Rich text in a label.** Her help can contain a code block, so that bubble uses Qt's small HTML subset: `details_html()` escapes everything first (her text is never trusted as HTML), then wraps code in a light box. Two gotchas found while building it: `QLabel` has its own Qt property called `text`, so `setProperty("text", ...)` silently replaced the rich text; and a rich-text label inside nested layouts needs `setMinimumHeight(heightForWidth(...))`, or it gets squashed to one line.
+
 ### Failing gently
 
-Every problem becomes a `ChatError` with a `kind` (`no_key`, `auth`, `quota`, `offline`, …), and each kind has a line in her own voice (`OFFLINE_LINES`). The technical detail goes to the log, never the key itself.
+Every problem becomes a `ChatError` with a `kind` (`no_key`, `auth`, `quota`, `vision`, `offline`, …), and each kind has a line in her own voice (`OFFLINE_LINES`). The technical detail goes to the log, never the key itself.
 
 ### Testing without a key
 
@@ -411,7 +469,7 @@ Running from source needs Python. Real users want a download that just works. Th
 ```mermaid
 flowchart LR
     T["git push origin v0.3.0"] --> GA[GitHub Actions<br/>Windows machine]
-    GA --> TS[Run the 108 tests]
+    GA --> TS[Run the 115 tests]
     TS --> PI["PyInstaller<br/>DeskMate.exe + _internal"]
     PI --> CK["DeskMate.exe --check"]
     CK --> IS[Inno Setup<br/>installer]
@@ -500,13 +558,6 @@ She already tells you when a new version is out (`updates.py`). Make **Update** 
 <details><summary>💡 Hint</summary>
 
 The release JSON has an `assets` list with each file's `browser_download_url`. Download `DeskMate-Setup-*.exe` on a thread to `%TEMP%`, check its SHA-256 against `SHA256SUMS.txt` from the same release (never run a file you haven't verified!), then start it with `/SILENT` and quit DeskMate so the installer can replace her.
-</details>
-
-### 🔴 Claude as a third brain
-Add Anthropic's Claude next to OpenAI and Ollama.
-<details><summary>💡 Hint</summary>
-
-Claude uses its own format: `POST https://api.anthropic.com/v1/messages` with the headers `x-api-key` and `anthropic-version: 2023-06-01`, the system prompt as a separate `"system"` field, a required `"max_tokens"`, and the answer in `content[0].text`. Add a `"claude"` provider in `ChatConfig`, a small branch in `ChatSession.ask`, and a test against a fake server like `tests/fake_openai.py`.
 </details>
 
 ### 🔴 Peek from behind a window

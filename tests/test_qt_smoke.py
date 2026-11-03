@@ -452,9 +452,13 @@ class QtSmokeTests(unittest.TestCase):
                 spin(0.05)
             self.assertIn("key", controller.bubble.text)
             # The settings dialog opens and hides the key field for Ollama.
-            dialog = ChatSettingsDialog(settings, fake.key, "Testy")
-            self.assertIn("...", dialog.key.placeholderText())
-            dialog.provider.setCurrentIndex(1)
+            dialog = ChatSettingsDialog(settings, {"openai": fake.key, "anthropic": ""}, "Testy")
+            self.assertIn("...", dialog.key.placeholderText())  # the saved OpenAI key, masked
+            dialog.provider.setCurrentIndex(dialog.provider.findData("claude"))
+            self.assertEqual(dialog.form.labelForField(dialog.key).text(), "Anthropic API key")
+            self.assertIn("sk-ant-", dialog.key.placeholderText())  # no Claude key saved yet
+            self.assertEqual(dialog.config().provider, "claude")
+            dialog.provider.setCurrentIndex(dialog.provider.findData("ollama"))
             self.assertEqual(dialog.config().provider, "ollama")
             self.assertEqual(dialog.config().api_key, "")
             dialog.close()
@@ -620,6 +624,109 @@ class QtSmokeTests(unittest.TestCase):
             self.assertEqual(len(log.bubble_texts()), 2)
             controller._forget_chat()
             self.assertEqual(log.bubble_texts(), [])
+            log.hide()
+            controller._on_about_to_quit()
+            controller.companion.close()
+
+    def test_look_at_my_screen(self):
+        import random
+        from unittest import mock
+
+        from PySide6.QtGui import QKeyEvent, QPixmap
+
+        from deskmate.app import Controller
+        from deskmate.brain import Brain
+        from deskmate.character import load_pack
+        from deskmate.companion import load_frames
+        from deskmate.look import MAX_SIDE, snapshot_from
+        from deskmate.settings import Settings
+        from tests.fake_openai import FakeOpenAI
+
+        # Big screenshots are shrunk before they're sent.
+        big = QImage(3200, 1800, QImage.Format.Format_RGB32)
+        big.fill(QColor("white"))
+        snap = snapshot_from(big)
+        self.assertEqual((snap.width, snap.height), (MAX_SIDE, 882))
+        self.assertTrue(snap.data.startswith(b"\xff\xd8"))  # a JPEG
+
+        fake = FakeOpenAI()
+        self.addCleanup(fake.close)
+        with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
+            settings = Settings(Path(home) / "settings.json")
+            settings["perch"] = False  # never sit on the test machine's real windows
+            settings["update_check"] = False  # no real GitHub calls in tests
+            pack = load_pack(self.root)
+            brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5), wallclock=noon)
+            controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
+            controller.start()
+            controller.chat.config.api_key = fake.key
+            controller.chat.config.base_url = fake.url
+            controller.chat.config.model = "gpt-5.4-mini"
+            screens = []
+
+            def fake_screen(screen):  # a pretend screen: grey, with a red "error" box
+                screens.append(screen)
+                shot = QPixmap(screen.geometry().size())
+                shot.fill(QColor("gray"))
+                painter = QPainter(shot)
+                painter.fillRect(100, 100, 200, 150, QColor("red"))
+                painter.end()
+                return shot
+
+            controller._grab_screen = fake_screen
+
+            def picker():
+                deadline = time.monotonic() + 3
+                while not hasattr(controller._picker, "picked") and time.monotonic() < deadline:
+                    spin(0.05)
+                return controller._picker
+
+            # Esc cancels: she comes back and nothing changes.
+            controller.act_look.trigger()
+            self.assertEqual(controller.companion.windowOpacity(), 0.0)  # not in her own screenshot
+            picker().keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier))
+            self.assertIsNone(controller._picker)
+            self.assertEqual(controller.companion.windowOpacity(), 1.0)
+            self.assertIsNone(controller.chat.seeing)
+
+            # Drag a box over the red part.
+            controller.act_look.trigger()
+            box = picker()
+            mouse(box, QEvent.Type.MouseButtonPress, QPoint(100, 100))
+            mouse(box, QEvent.Type.MouseMove, QPoint(300, 250), Qt.MouseButton.NoButton)
+            mouse(box, QEvent.Type.MouseButtonRelease, QPoint(300, 250), buttons=Qt.MouseButton.NoButton)
+            self.assertEqual(controller.companion.windowOpacity(), 1.0)
+            seen = controller.chat.seeing
+            self.assertEqual((seen.width, seen.height), (200, 150))
+            log = controller._chat_log
+            self.assertTrue(log.isVisible())
+            self.assertTrue(log.look_bar.isVisibleTo(log))
+            self.assertIn("lemme see", controller.bubble.text)
+
+            # Just Enter: "Can you take a look at this?" goes with the picture.
+            fake.reply = ("[surprised] That red box is an error~\n---\nIt says the file is missing.\n"
+                          "1. Check the path.\n```\nopen('data.txt')\n```\nWhich folder is data.txt in?")
+            log.edit.returnPressed.emit()
+            deadline = time.monotonic() + 10
+            while log._waiting and time.monotonic() < deadline:
+                spin(0.05)
+            text, picture = fake.requests[-1]["messages"][-1]["content"]
+            self.assertTrue(picture["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+            self.assertEqual(controller.bubble.text, "That red box is an error~")
+            self.assertEqual(log.bubble_texts(), [("user", "Can you take a look at this?"),
+                                                  ("assistant", "That red box is an error~")])
+            self.assertIn("Which folder", log.bubble_details()[0])
+            # The small chat box knows she's looking too, until you press Stop.
+            log.hide()
+            controller.open_chat()
+            self.assertIn("screen", controller._chat_box.edit.placeholderText())
+            controller._chat_box.hide()
+            controller.open_chat_log()
+            log.stop_button.click()
+            self.assertIsNone(controller.chat.seeing)
+            self.assertFalse(log.look_bar.isVisibleTo(log))
+            log.edit.returnPressed.emit()  # empty Enter does nothing once she stopped looking
+            self.assertFalse(log._waiting)
             log.hide()
             controller._on_about_to_quit()
             controller.companion.close()

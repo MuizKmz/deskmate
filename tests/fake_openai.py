@@ -9,14 +9,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 class FakeOpenAI:
     MODELS = ["gpt-4o-mini-transcribe", "gpt-4o-mini-tts", "gpt-5-mini", "gpt-5.4-mini", "gpt-6.1-sol",
-              "text-embedding-3-small", "tts-1", "tts-1-hd"]
+              "text-embedding-3-small", "tts-1", "tts-1-hd", "claude-haiku-5-5", "claude-sonnet-5-5"]
     WAV = b"RIFF\x24\x00\x00\x00WAVEfmt fake-audio"
 
     def __init__(self, key: str = "sk-test-1234567890"):
         self.key = key
         self.reply = "[happy] Ehehe, hi there~"
         self.status = 200  # set to 401 / 429 / 500 to pretend something failed
+        self.error = "pretend failure"  # the message that comes with it
         self.requests: list[dict] = []
+        self.headers: list[dict] = []  # headers of each POST (to check how the key was sent)
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -32,11 +34,13 @@ class FakeOpenAI:
                 self.wfile.write(body)
 
             def _check(self):
-                if self.headers.get("Authorization") != f"Bearer {fake.key}":
+                bearer = self.headers.get("Authorization") == f"Bearer {fake.key}"
+                anthropic = self.headers.get("x-api-key") == fake.key and self.headers.get("anthropic-version")
+                if not (bearer or anthropic):
                     self._send(401, {"error": {"message": "Incorrect API key provided"}})
                     return False
                 if fake.status != 200:
-                    self._send(fake.status, {"error": {"message": "pretend failure"}})
+                    self._send(fake.status, {"error": {"message": fake.error}})
                     return False
                 return True
 
@@ -47,7 +51,12 @@ class FakeOpenAI:
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 fake.requests.append(body)
+                fake.headers.append({k.lower(): v for k, v in self.headers.items()})  # names ignore case
                 if not self._check():
+                    return
+                if self.path.endswith("/messages"):  # pretend to be Claude (Anthropic's Messages API)
+                    self._send(200, {"type": "message", "role": "assistant",
+                                     "content": [{"type": "text", "text": fake.reply}]})
                     return
                 if self.path.endswith("/audio/speech"):  # her voice: raw WAV bytes, not JSON
                     self.send_response(200)

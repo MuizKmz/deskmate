@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html
+import re
 import threading
 from typing import Any, Callable
 
@@ -12,7 +14,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
-from .chat import OLLAMA_URL, ChatConfig, ChatError, list_models, mask, pick_model
+from .chat import KEY_NAMES, MODEL_SETTINGS, OLLAMA_URL, ChatConfig, ChatError, list_models, mask, pick_model
 from .menu_style import GLASS_BOTTOM, GLASS_TOP, INK, accent_of
 from .menu_style import icon as _icon
 
@@ -51,12 +53,15 @@ class ChatBox(QWidget):
 
     sent = Signal(str)
     history_requested = Signal()
+    look_requested = Signal()
 
     def __init__(self, name: str, theme: dict[str, str]):
         flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint
         super().__init__(None, flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setWindowTitle(f"Chat with {name}")
+        self._name = name
+        self._looking = False
         self._accent = QColor(theme.get("accent", "#C9A0DC"))
         self._ink = QColor(theme.get("text", "#3B2F4A"))
         self._fill = QColor(theme.get("bubble", "#FFFFFF"))
@@ -79,13 +84,27 @@ class ChatBox(QWidget):
         self.history_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.history_button.setAutoRaise(True)
         self.history_button.clicked.connect(self.history_requested)
+        self.look_button = QToolButton(self)
+        self.look_button.setIcon(_icon("eye", self._accent.darker(130)))
+        self.look_button.setToolTip(f"Show {name} your screen")
+        self.look_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.look_button.setAutoRaise(True)
+        self.look_button.clicked.connect(self.look_requested)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 8, 8, 8)
+        layout.setSpacing(2)
         layout.addWidget(self.history_button)
+        layout.addWidget(self.look_button)
         layout.addWidget(self.edit, 1)
         layout.addWidget(self.send_button)
-        self.resize(300, 46)
+        self.resize(320, 46)
         self._waiting = False
+
+    def set_looking(self, looking: bool) -> None:
+        """While she can see your screenshot, an empty message means 'just have a look'."""
+        self._looking = looking
+        self.edit.setPlaceholderText("Ask about your screen... (or just Enter)" if looking
+                                     else f"Say something to {self._name}...")
 
     def set_waiting(self, waiting: bool) -> None:
         """While she's thinking, you can type but not send (one question at a time)."""
@@ -95,7 +114,7 @@ class ChatBox(QWidget):
 
     def _send(self) -> None:
         text = self.edit.text().strip()
-        if text and not self._waiting:
+        if (text or self._looking) and not self._waiting:
             self.edit.clear()
             self.sent.emit(text)
 
@@ -133,26 +152,27 @@ class ChatBox(QWidget):
 
 
 class ChatSettingsDialog(QDialog):
-    """Choose OpenAI or Ollama, paste the key, pick a model, and test it."""
+    """Choose OpenAI, Claude or Ollama, paste the key, pick a model, and test it."""
 
-    def __init__(self, settings, current_key: str, name: str, parent=None):
+    KEY_LABELS = {"openai": ("OpenAI API key", "sk-..."), "claude": ("Anthropic API key", "sk-ant-...")}
+
+    def __init__(self, settings, keys, name: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Chat with {name}: settings")
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self.setMinimumWidth(460)
         self._settings = settings
-        self._key = current_key
+        self._keys = {"openai": keys} if isinstance(keys, str) else dict(keys)  # saved keys, by key name
         self._worker = Background(self)
 
         self.provider = QComboBox()
         self.provider.addItem("OpenAI (needs an API key)", "openai")
+        self.provider.addItem("Claude (needs an Anthropic API key)", "claude")
         self.provider.addItem("Ollama (free, runs on this PC)", "ollama")
-        self.provider.setCurrentIndex(0 if settings["chat_provider"] == "openai" else 1)
+        self.provider.setCurrentIndex(max(0, self.provider.findData(settings["chat_provider"])))
 
         self.key = QLineEdit()
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
-        self.key.setPlaceholderText(f"saved: {mask(current_key)}  (leave empty to keep it)" if current_key
-                                    else "sk-...  (paste your key here)")
         self.url = QLineEdit(settings["ollama_url"] or OLLAMA_URL)
 
         self.model = QComboBox()
@@ -174,8 +194,8 @@ class ChatSettingsDialog(QDialog):
         self.form.addRow("OpenAI API key", self.key)
         self.form.addRow("Ollama address", self.url)
         self.form.addRow("Model", model_row)
-        note = QLabel("The key is saved only on this PC (in your DeskMate settings folder), "
-                      "never in the project folder. Tip: set a monthly spending limit in your OpenAI account.")
+        note = QLabel("Keys are saved only on this PC (in your DeskMate settings folder), never in the project "
+                      "folder. Tip: set a monthly spending limit in your OpenAI / Anthropic account.")
         note.setWordWrap(True)
         note.setStyleSheet("color: gray;")
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
@@ -199,8 +219,12 @@ class ChatSettingsDialog(QDialog):
         return self.provider.currentData()
 
     @property
+    def saved_key(self) -> str:
+        return self._keys.get(KEY_NAMES.get(self.chosen_provider, ""), "")
+
+    @property
     def chosen_key(self) -> str:
-        return self.key.text().strip() or self._key
+        return self.key.text().strip() or self.saved_key
 
     @property
     def chosen_model(self) -> str:
@@ -213,15 +237,25 @@ class ChatSettingsDialog(QDialog):
                           base_url=self.url.text().strip() if ollama else "")
 
     def _provider_changed(self) -> None:
-        ollama = self.chosen_provider == "ollama"
+        provider = self.chosen_provider
+        ollama = provider == "ollama"
         self.form.setRowVisible(self.key, not ollama)
         self.form.setRowVisible(self.url, ollama)
+        if not ollama:
+            label, example = self.KEY_LABELS[provider]
+            self.form.labelForField(self.key).setText(label)
+            self.key.clear()  # a typed key belongs to the brain it was typed for
+            saved = self.saved_key
+            self.key.setPlaceholderText(f"saved: {mask(saved)}  (leave empty to keep it)" if saved
+                                        else f"{example}  (paste your key here)")
         self.model.clear()
-        current = self._settings["ollama_model" if ollama else "chat_model"]
+        current = self._settings[MODEL_SETTINGS[provider]]
         if current:
             self.model.addItem(current)
         self.model.setEditText(current)
-        self.status.setText("Install Ollama from ollama.com, then run:  ollama pull llama3.2" if ollama else "")
+        hints = {"ollama": "Install Ollama from ollama.com, then run:  ollama pull llama3.2",
+                 "claude": "Get a key at console.anthropic.com (API keys)."}
+        self.status.setText(hints.get(provider, ""))
 
     # ------------------------------------------------------------------ network
     def _busy(self, text: str) -> None:
@@ -271,13 +305,37 @@ def describe_error(error: BaseException) -> str:
     if isinstance(error, ChatError):
         return {
             "no_key": "Paste your OpenAI API key first.",
-            "auth": "That key was refused. Check it (and that it's not deleted) on platform.openai.com.",
-            "quota": "Out of credit or rate-limited. Check billing on platform.openai.com.",
+            "auth": "That key was refused. Check it (and that it's not deleted) in your OpenAI / Anthropic account.",
+            "quota": "Out of credit or rate-limited. Check billing in your OpenAI / Anthropic account.",
             "model": f"Model problem: {error.detail}",
+            "vision": "This model can't see pictures. Pick one that can (for Ollama: llama3.2-vision or llava).",
             "offline": "Can't connect. Is the internet on? For Ollama: is it running?",
             "timeout": "No answer in time. Try again.",
         }.get(error.kind, f"Error: {error.detail or error.kind}")
     return f"Error: {error}"
+
+
+def details_html(text: str) -> str:
+    """Her longer help (steps, an example, a question) as simple rich text: code blocks get a box."""
+    out = []
+    for i, part in enumerate(re.split(r"```[\w+#.-]*[ \t]*\n?", text or "")):
+        if i % 2:  # inside ``` ... ```
+            code = "<br>".join(_keep_indent(html.escape(line)) for line in part.strip("\n").split("\n"))
+            out.append('<table width="100%" cellpadding="7" cellspacing="0" bgcolor="#EEE6F7" '
+                       'style="margin-top: 4px; margin-bottom: 4px;"><tr><td>'
+                       f'<span style="font-family: Consolas, \'Cascadia Mono\', monospace; font-size: 9pt; '
+                       f'color: #2E2340;">{code}</span></td></tr></table>')
+        elif part.strip():
+            escaped = html.escape(part.strip("\n"))
+            escaped = re.sub(r"`([^`\n]{1,80})`", r'<span style="font-family: Consolas, monospace; '
+                             r'background-color: #EEE6F7;">&nbsp;\1&nbsp;</span>', escaped)
+            out.append(escaped.replace("\n", "<br>"))
+    return "".join(out)
+
+
+def _keep_indent(line: str) -> str:
+    stripped = line.lstrip(" ")
+    return "&nbsp;" * (len(line) - len(stripped)) + stripped
 
 
 def _css(color: QColor, alpha: float | None = None) -> str:
@@ -292,7 +350,9 @@ class ChatLogWindow(QWidget):
     """
 
     sent = Signal(str)
-    W, H = 360, 500
+    look_requested = Signal()
+    look_stopped = Signal()
+    W, H = 390, 540
 
     def __init__(self, name: str, theme: dict[str, str], avatar: QPixmap, smooth: bool = True):
         flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint
@@ -307,6 +367,7 @@ class ChatLogWindow(QWidget):
         self._lines: list[dict] = []
         self._pending: list[dict] = []  # sent, not answered yet (shown right away)
         self._notes: list[dict] = []    # her "can't connect" lines: shown, not saved
+        self._thumb: QPixmap | None = None  # the screenshot she can see right now
 
         # --- top bar: face, name, close
         from .menu_style import Header  # same round face as in her menu
@@ -355,10 +416,42 @@ class ChatLogWindow(QWidget):
         self.column.setSpacing(6)
         self.area.setWidget(self.inner)
 
+        # --- "she can see your screenshot" bar
+        self.look_bar = QWidget(self)
+        look_row = QHBoxLayout(self.look_bar)
+        look_row.setContentsMargins(12, 6, 12, 0)
+        self.look_thumb = QLabel()
+        self.look_thumb.setFixedSize(48, 30)
+        self.look_thumb.setScaledContents(True)
+        self.look_thumb.setStyleSheet(f"border: 1px solid {_css(self._accent, 0.6)}; border-radius: 3px;")
+        self.look_label = QLabel(f"{name} can see your screenshot")
+        self.look_label.setStyleSheet(f"color: {_css(INK, 0.75)}; font-size: 8.5pt;")
+        self.look_label.setToolTip("Your next questions include this picture (for 5 minutes after the last one).")
+        self.stop_button = QToolButton()
+        self.stop_button.setText("Stop")
+        self.stop_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.stop_button.setToolTip("She stops looking: your next messages are text only")
+        self.stop_button.setStyleSheet(f"QToolButton {{ color: {INK.name()}; border: 1px solid {_css(self._accent, 0.5)};"
+                                       f" border-radius: 9px; padding: 1px 10px; font-size: 8.5pt; }}"
+                                       f" QToolButton:hover {{ background: {_css(self._accent, 0.3)}; }}")
+        self.stop_button.clicked.connect(self.look_stopped)
+        look_row.addWidget(self.look_thumb)
+        look_row.addWidget(self.look_label, 1)
+        look_row.addWidget(self.stop_button)
+        self.look_bar.hide()
+
         # --- the input
         bottom = QWidget(self)
         row = QHBoxLayout(bottom)
         row.setContentsMargins(12, 6, 12, 12)
+        self.look_button = QToolButton()
+        self.look_button.setIcon(_icon("eye", INK))
+        self.look_button.setToolTip(f"Show {name} your screen")
+        self.look_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.look_button.setStyleSheet(f"QToolButton {{ border: none; border-radius: 15px; min-width: 30px;"
+                                       f" min-height: 30px; }} QToolButton:hover {{ background: {_css(self._accent, 0.3)}; }}")
+        self.look_button.clicked.connect(self.look_requested)
+        row.addWidget(self.look_button)
         self.edit = QLineEdit()
         self.edit.setMaxLength(1000)
         self.edit.setPlaceholderText(f"Say something to {name}...")
@@ -381,6 +474,7 @@ class ChatLogWindow(QWidget):
         layout.setSpacing(0)
         layout.addWidget(top)
         layout.addWidget(self.area, 1)
+        layout.addWidget(self.look_bar)
         layout.addWidget(bottom)
         self._render()
 
@@ -392,9 +486,23 @@ class ChatLogWindow(QWidget):
         self._notes = []
         self._render()
 
-    def add_pending(self, text: str, time_text: str = "") -> None:
-        self._pending.append({"role": "user", "text": text, "time": time_text})
+    def add_pending(self, text: str, time_text: str = "", image: bool = False) -> None:
+        self._pending.append({"role": "user", "text": text, "time": time_text, "image": image})
         self._render()
+
+    def set_look(self, thumb: QPixmap | None) -> None:
+        """Show (or, with None, hide) the 'she can see your screenshot' bar."""
+        self._thumb = thumb
+        self.look_bar.setVisible(thumb is not None)
+        if thumb is not None:
+            self.look_thumb.setPixmap(thumb)
+        self.edit.setPlaceholderText("Ask about your screen... (or just Enter)" if thumb is not None
+                                     else f"Say something to {self._name}...")
+        self._render()
+
+    @property
+    def looking(self) -> bool:
+        return self._thumb is not None
 
     def add_note(self, text: str) -> None:
         """Something she says that isn't part of the saved chat (e.g. 'I can't connect')."""
@@ -408,8 +516,13 @@ class ChatLogWindow(QWidget):
 
     def bubble_texts(self) -> list[tuple[str, str]]:
         """(role, text) of every bubble on screen, in order (handy for tests)."""
-        return [(w.property("role"), w.property("text")) for w in self.inner.findChildren(QLabel)
+        return [(w.property("role"), w.property("bubble_text")) for w in self.inner.findChildren(QLabel)
                 if w.property("role")]
+
+    def bubble_details(self) -> list[str]:
+        """The longer help under her bubbles (handy for tests)."""
+        return [w.property("details") for w in self.inner.findChildren(QLabel)
+                if w.property("role") == "assistant" and w.property("details")]
 
     def _render(self) -> None:
         while self.column.count():
@@ -423,28 +536,38 @@ class ChatLogWindow(QWidget):
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             empty.setStyleSheet(f"color: {_css(INK, 0.5)}; font-size: 10pt; padding: 40px 0;")
             self.column.addWidget(empty)
-        for line in everything:
-            self._add_bubble(line)
+        latest_picture = max((i for i, line in enumerate(everything) if line.get("image")), default=-1)
+        for i, line in enumerate(everything):
+            self._add_bubble(line, self._thumb if i == latest_picture else None)
         if self._waiting:
             self._add_bubble({"role": "assistant", "text": "...", "time": "", "typing": True})
         self.column.addStretch(1)
         QTimer.singleShot(0, self._scroll_to_end)
 
-    def _add_bubble(self, line: dict) -> None:
+    def _add_bubble(self, line: dict, thumb: QPixmap | None = None) -> None:
         mine = line["role"] == "user"
-        label = QLabel(line["text"])
+        details = line.get("details", "")
+        label = QLabel()
+        if details:  # a look reply: her short line, then the steps / example / question
+            label.setTextFormat(Qt.TextFormat.RichText)
+            label.setText(f"{html.escape(line['text'])}<div style='margin-top: 6px;'>{details_html(details)}</div>")
+        else:
+            label.setTextFormat(Qt.TextFormat.PlainText)
+            label.setText(line["text"])
         label.setWordWrap(True)
-        label.setTextFormat(Qt.TextFormat.PlainText)
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         font = label.font()
         font.setPointSizeF(10)
         label.setFont(font)
-        widest = int(self.W * 0.72)
+        widest = int(self.W * (0.86 if details else 0.72))
         natural = label.fontMetrics().horizontalAdvance(line["text"]) + 34  # text + padding + a little slack
-        label.setFixedWidth(min(widest, max(36, natural)))  # short text: snug bubble; long text: wraps at 72%
+        label.setFixedWidth(widest if details else min(widest, max(36, natural)))  # short: snug; long: wraps
         label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
+        if details:  # rich text (code boxes) needs its height worked out up front, or it gets cut to one line
+            label.setMinimumHeight(label.heightForWidth(label.width()))
         label.setProperty("role", "user" if mine else "assistant")
-        label.setProperty("text", line["text"])
+        label.setProperty("bubble_text", line["text"])  # not "text": that IS the label text
+        label.setProperty("details", details)
         if mine:
             style = (f"background: {_css(self._accent, 0.85)}; color: white;"
                      " border-radius: 14px; border-bottom-right-radius: 4px;")
@@ -465,6 +588,17 @@ class ChatLogWindow(QWidget):
         stack = QVBoxLayout(box)
         stack.setContentsMargins(0, 0, 0, 0)
         stack.setSpacing(2)
+        if line.get("image"):  # you showed her your screen with this message
+            picture = QLabel()
+            if thumb is not None:
+                picture.setPixmap(thumb.scaled(180, 112, Qt.AspectRatioMode.KeepAspectRatio,
+                                               Qt.TransformationMode.SmoothTransformation))
+                picture.setStyleSheet(f"border: 1px solid {_css(self._accent, 0.6)}; border-radius: 4px;")
+            else:
+                picture.setText("📷 your screen")
+                picture.setStyleSheet(f"color: {_css(INK, 0.55)}; font-size: 8pt; padding: 0 4px;")
+            picture.setAlignment(Qt.AlignmentFlag.AlignRight)
+            stack.addWidget(picture, 0, Qt.AlignmentFlag.AlignRight)
         stack.addLayout(holder)
         extra = [line.get("time", "")]
         extra += [f"⏰ {when}: {what}" for when, what in line.get("reminders", [])]
@@ -482,7 +616,7 @@ class ChatLogWindow(QWidget):
 
     def _send(self) -> None:
         text = self.edit.text().strip()
-        if text and not self._waiting:
+        if (text or self.looking) and not self._waiting:
             self.edit.clear()
             self._notes = []
             self.sent.emit(text)

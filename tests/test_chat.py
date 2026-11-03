@@ -127,7 +127,110 @@ class ServerTests(unittest.TestCase):
         with self.assertRaises(C.ChatError) as caught:
             self.session(base_url="http://127.0.0.1:9/v1").ask("hi")  # nothing listens there
         self.assertEqual(caught.exception.kind, "offline")
-        self.assertEqual(set(C.OFFLINE_LINES), {"no_key", "auth", "quota", "model", "offline", "timeout", "server"})
+        self.assertEqual(set(C.OFFLINE_LINES), {"no_key", "auth", "quota", "model", "vision", "offline", "timeout",
+                                                 "server"})
+
+    def test_claude(self):
+        session = self.session(provider="claude", model="")
+        self.fake.reply = "[blush] Ehehe~ hi!"
+        self.assertEqual(session.ask("hello", "It is morning."), ("blush", "Ehehe~ hi!"))
+        self.assertEqual(session.config.model, "claude-haiku-5-5")  # picked: quick and cheap
+        sent, headers = self.fake.requests[-1], self.fake.headers[-1]
+        self.assertIn("You are Testy.", sent["system"])  # the persona goes in "system"...
+        self.assertIn("It is morning.", sent["system"])
+        self.assertEqual(sent["messages"], [{"role": "user", "content": "hello"}])  # ...not in the messages
+        self.assertGreater(sent["max_tokens"], 0)
+        self.assertEqual(headers.get("x-api-key"), self.fake.key)  # Anthropic's key header, not "Bearer"
+        self.assertIsNone(headers.get("authorization"))
+        session.ask("again")
+        self.assertEqual([m["role"] for m in self.fake.requests[-1]["messages"]], ["user", "assistant", "user"])
+        with self.assertRaises(C.ChatError) as caught:
+            self.session(provider="claude", api_key="sk-ant-wrong").ask("hi")
+        self.assertEqual(caught.exception.kind, "auth")
+
+    def test_picking_a_claude_model(self):
+        models = ["claude-3-5-haiku-20241022", "claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"]
+        self.assertEqual(C.pick_model(models, "claude"), "claude-haiku-5-5")
+        self.assertEqual(C.pick_model(["claude-sonnet-5-5", "claude-opus-5-5"], "claude"), "claude-sonnet-5-5")
+        self.assertEqual(C.pick_model(["claude-3-5-haiku-20241022"], "claude"), "claude-3-5-haiku-20241022")
+        self.assertEqual(C.ChatConfig(provider="claude").url, C.CLAUDE_URL)
+        self.assertTrue(C.ChatConfig(provider="claude").needs_key)
+
+    LOOK_REPLY = ("[surprised] Ah, a typo on line 3~ you wrote pritn!\n---\n"
+                  "1. Click line 3.\n2. Change pritn to print:\n```python\n    print('hi')\n```\nThen run it again!")
+
+    def test_she_looks_at_your_screenshot(self):
+        now = [100.0]
+        session = self.session()
+        session.clock = lambda: now[0]
+        session.show(C.Snapshot(b"\xff\xd8fake-jpeg", 800, 450))
+        self.fake.reply = self.LOOK_REPLY
+        mood, reply = session.ask("")  # just pressing Enter means "have a look"
+        self.assertEqual((mood, reply), ("surprised", "Ah, a typo on line 3~ you wrote pritn!"))
+        self.assertIn("```python\n    print('hi')\n```", session.last_details)  # code keeps its indent
+        sent = self.fake.requests[-1]
+        self.assertIn("screenshot", sent["messages"][0]["content"])  # the look instructions
+        self.assertIn("ask one clear question", sent["messages"][0]["content"])
+        text, picture = sent["messages"][-1]["content"]
+        self.assertEqual(text, {"type": "text", "text": C.LOOK_TEXT})
+        self.assertEqual(picture["image_url"]["url"], "data:image/jpeg;base64,/9hmYWtlLWpwZWc=")
+        # The chat log gets the short line and the help; the picture itself is never stored.
+        user, her = session.transcript()
+        self.assertTrue(user["image"])
+        self.assertEqual(her["text"], reply)
+        self.assertTrue(her["details"].startswith("1. Click line 3."))
+        self.assertNotIn("/9hmYWtl", (self.tmp / "chat.json").read_text(encoding="utf-8"))
+        # A follow-up a minute later still includes the picture...
+        now[0] += 60
+        self.fake.reply = "[happy] Yup, exactly that one~"
+        session.ask("this line?")
+        self.assertIsInstance(self.fake.requests[-1]["messages"][-1]["content"], list)
+        self.assertEqual(self.fake.requests[-1]["messages"][1]["content"],
+                         "(showing you my screen) " + C.LOOK_TEXT)  # earlier turns: text only
+        self.assertEqual(session.last_details, "")
+        # ...but after 5 quiet minutes (or Stop) she's back to plain chat.
+        now[0] += C.LOOK_SECONDS + 1
+        self.assertIsNone(session.seeing)
+        session.ask("thanks!")
+        self.assertEqual(self.fake.requests[-1]["messages"][-1]["content"], "thanks!")
+        self.assertNotIn("screenshot", self.fake.requests[-1]["messages"][0]["content"])
+        session.show(C.Snapshot(b"x", 1, 1))
+        session.stop_looking()
+        self.assertIsNone(session.seeing)
+
+    def test_claude_looks_too(self):
+        session = self.session(provider="claude", model="claude-haiku-5-5")
+        session.show(C.Snapshot(b"\xff\xd8fake-jpeg", 800, 450))
+        self.fake.reply = self.LOOK_REPLY
+        self.assertEqual(session.ask("what's wrong?")[0], "surprised")
+        sent = self.fake.requests[-1]
+        picture, text = sent["messages"][-1]["content"]  # Anthropic: the picture first, then the question
+        self.assertEqual(picture, {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                                "data": "/9hmYWtlLWpwZWc="}})
+        self.assertEqual(text, {"type": "text", "text": "what's wrong?"})
+        self.assertGreaterEqual(sent["max_tokens"], 1000)  # room for steps and an example
+        self.assertIn("screenshot", sent["system"])
+
+    def test_a_model_that_cant_see(self):
+        session = self.session()
+        session.show(C.Snapshot(b"x", 1, 1))
+        self.fake.status, self.fake.error = 400, "Invalid content type. image_url is only supported by certain models."
+        with self.assertRaises(C.ChatError) as caught:
+            session.ask("look")
+        self.assertEqual(caught.exception.kind, "vision")
+
+    def test_splitting_a_look_reply(self):
+        self.assertEqual(C.split_look_reply("[happy] Looks fine~"), ("[happy] Looks fine~", ""))
+        head, details = C.split_look_reply("[talk] Hmm.\n  ---  \n## Steps\n**Do** this.\n\n\n\nThen that.")
+        self.assertEqual((head, details), ("[talk] Hmm.", "Steps\nDo this.\n\nThen that."))
+        long = "[talk] " + "This part is long. " * 30  # forgot the --- : the log still gets all of it
+        head, details = C.split_look_reply(long)
+        self.assertEqual(head, long.strip())
+        self.assertTrue(details.startswith("This part is long."))
+        self.assertNotIn("[talk]", details)
+        cut = C.clean_details("```\n" + "x = 1\n" * 600)
+        self.assertLessEqual(len(cut), C.MAX_DETAILS_CHARS + 10)
+        self.assertEqual(cut.count("```") % 2, 0)  # a cut code block is still closed
 
     def test_ollama_needs_no_key(self):
         config = C.ChatConfig(provider="ollama")
@@ -143,6 +246,11 @@ class KeyTests(unittest.TestCase):
                 self.assertEqual(C.load_key(path), "sk-from-environment")
             C.save_key(path, "  sk-abcdefghijklmnop  ")
             self.assertEqual(C.load_key(path), "sk-abcdefghijklmnop")
+            C.save_key(path, "sk-ant-zyxwvutsrq", "anthropic")  # a second key...
+            self.assertEqual(C.load_key(path), "sk-abcdefghijklmnop")  # ...doesn't erase the first
+            self.assertEqual(C.load_key(path, "anthropic"), "sk-ant-zyxwvutsrq")
+            with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-env"}, clear=True):
+                self.assertEqual(C.load_key(Path(home) / "none.json", "anthropic"), "sk-ant-env")
             self.assertEqual(C.mask("sk-abcdefghijklmnop"), "sk-...mnop")
             path.write_text("{broken", encoding="utf-8")
             with mock.patch.dict(os.environ, {}, clear=True):

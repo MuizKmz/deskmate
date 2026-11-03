@@ -206,6 +206,9 @@ class Controller:
         self._chat_box = None
         self._chat_log = None
         self._chat_worker = None
+        self._picker = None      # the "drag over what I should look at" overlay, while it's open
+        self._look_thumb = None  # small picture of what she's looking at (for the chat windows)
+        self._grab_screen = lambda screen: screen.grabWindow(0)  # tests swap in a fake screen
         self.chat = self._make_chat()
         from .reminders import ReminderBook
 
@@ -281,6 +284,8 @@ class Controller:
         except Exception:  # never let one bad tick kill her; it's logged
             log.exception("Brain tick failed")
         self._check_reminders(now)
+        if self._look_thumb is not None and self.chat.seeing is None:
+            self._show_look(None)  # five quiet minutes: she stopped looking by herself
         self._apply(now)
 
     def _apply(self, now: float) -> None:
@@ -341,14 +346,14 @@ class Controller:
 
     # ------------------------------------------------------------------- chat
     def _make_chat(self):
-        from .chat import ChatConfig, ChatSession, load_key, persona_prompt
+        from .chat import KEY_NAMES, MODEL_SETTINGS, ChatConfig, ChatSession, load_key, persona_prompt
 
-        ollama = self.settings["chat_provider"] == "ollama"
+        provider = self.settings["chat_provider"]
         config = ChatConfig(
-            provider=self.settings["chat_provider"],
-            model=self.settings["ollama_model" if ollama else "chat_model"],
-            api_key="" if ollama else load_key(data_dir() / "secrets.json"),
-            base_url=self.settings["ollama_url"] if ollama else "",
+            provider=provider,
+            model=self.settings[MODEL_SETTINGS[provider]],
+            api_key=load_key(data_dir() / "secrets.json", KEY_NAMES[provider]) if provider in KEY_NAMES else "",
+            base_url=self.settings["ollama_url"] if provider == "ollama" else "",
         )
         return ChatSession(config, persona_prompt(self.pack.meta, self.pack.name),
                            path=data_dir() / f"chat_{self.pack.id}.json")
@@ -373,6 +378,8 @@ class Controller:
             self._chat_box = ChatBox(self.pack.name, self.pack.theme)
             self._chat_box.sent.connect(self._on_chat_sent)
             self._chat_box.history_requested.connect(self.open_chat_log)
+            self._chat_box.look_requested.connect(self.look_at_screen)
+        self._chat_box.set_looking(self._look_thumb is not None)
         if self._chat_worker is None:
             self._chat_worker = Background()
         sprite = self.companion._sprite_rect_local()
@@ -382,15 +389,19 @@ class Controller:
     def _on_chat_sent(self, text: str) -> None:
         from datetime import datetime
 
-        from .chat import situation
+        from .chat import LOOK_TEXT, situation
 
+        looking = self.chat.seeing is not None
+        text = text.strip() or (LOOK_TEXT if looking else "")
+        if not text:
+            return
         now = time.monotonic()
         self.brain.on_chat_sent(now)
         self._apply(now)
         self.bubble.say("...", 60, self.companion.head_rect_global(), self.companion.available_rect())
         self._set_chat_waiting(True)
         if self._chat_log is not None:
-            self._chat_log.add_pending(text, datetime.now().strftime("%H:%M"))
+            self._chat_log.add_pending(text, datetime.now().strftime("%H:%M"), image=looking)
         worked = (now - self.brain._active_since) / 60.0
         context = situation(datetime.now(), self.brain.label(now), worked)
         session = self.chat
@@ -403,7 +414,9 @@ class Controller:
         now = time.monotonic()
         if ok:
             mood, reply = value
-            key = "ollama_model" if self.chat.config.provider == "ollama" else "chat_model"
+            from .chat import MODEL_SETTINGS
+
+            key = MODEL_SETTINGS[self.chat.config.provider]
             if not self.settings[key] and self.chat.config.model:
                 self._set(key, self.chat.config.model)  # remember the model that was picked for you
             self._reminders_from_chat(now)
@@ -411,7 +424,9 @@ class Controller:
             kind = value.kind if isinstance(value, ChatError) else "server"
             log.warning("Chat failed (%s): %s", kind, getattr(value, "detail", value))
             mood, reply = ("pouty" if kind in ("no_key", "auth", "quota") else "sleepy"), OFFLINE_LINES[kind]
-        if self._chat_log is not None:
+        if ok and self.chat.last_details and (self._chat_log is None or not self._chat_log.isVisible()):
+            self.open_chat_log()  # she has steps / an example for you: show them
+        elif self._chat_log is not None:
             if ok:
                 self._chat_log.set_lines(self.chat.transcript())
             else:  # keep your unanswered message on screen, with her explanation under it
@@ -531,6 +546,10 @@ class Controller:
             self._chat_log = ChatLogWindow(self.pack.name, self.pack.theme, self.icon.pixmap(96),
                                            smooth=self.pack.meta.get("smooth", True))
             self._chat_log.sent.connect(self._on_chat_log_sent)
+            self._chat_log.look_requested.connect(self.look_at_screen)
+            self._chat_log.look_stopped.connect(self.stop_looking)
+        if self._chat_log.looking != (self._look_thumb is not None):
+            self._chat_log.set_look(self._look_thumb)
         if self._chat_worker is None:
             self._chat_worker = Background()
         if not self.companion.isVisible():
@@ -547,28 +566,96 @@ class Controller:
             return
         self._on_chat_sent(text)
 
+    # ----------------------------------------------------------- look at screen
+    def look_at_screen(self) -> None:
+        """Menu: 'Look at my screen'. She turns invisible, you drag over a part, she looks."""
+        from PySide6.QtCore import QTimer
+
+        from .look import HIDE_MS
+
+        if self._picker is not None:
+            return
+        if self.chat.config.needs_key and not self.chat.config.api_key and not self.open_chat_settings():
+            return
+        self._hidden_for_look = [w for w in (self.companion, self.bubble, self._chat_box, self._chat_log)
+                                 if w is not None and w.isVisible()]
+        for window in self._hidden_for_look:
+            window.setWindowOpacity(0.0)  # not hide(): she keeps her place, she's just not in the photo
+        self._picker = True  # taken: no second picker while this one is on its way
+        QTimer.singleShot(HIDE_MS, self._open_picker)
+
+    def _open_picker(self) -> None:
+        from PySide6.QtGui import QCursor, QGuiApplication
+
+        from .look import ScreenPicker
+
+        screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+        try:
+            shot = self._grab_screen(screen)
+        except Exception:
+            log.exception("Couldn't take a screenshot")
+            shot = None
+        if shot is None or shot.isNull():
+            self._end_look()
+            self._event(lambda now: self.brain.say(now, "Hmm, I couldn't see your screen... sorry!", "pouty"))
+            return
+        self._picker = ScreenPicker(shot, screen.geometry(), self._accent)
+        self._picker.picked.connect(self._on_look_picked)
+        self._picker.cancelled.connect(self._end_look)
+        self._picker.open()
+
+    def _end_look(self) -> None:
+        self._picker = None
+        for window in getattr(self, "_hidden_for_look", []):
+            window.setWindowOpacity(1.0)
+        self._hidden_for_look = []
+
+    def _on_look_picked(self, image) -> None:
+        from .look import snapshot_from, thumbnail
+
+        self._end_look()
+        snapshot = snapshot_from(image)
+        log.info("Showing her a %dx%d screenshot (%d KB)", snapshot.width, snapshot.height, len(snapshot.data) // 1024)
+        self.chat.show(snapshot)
+        self._show_look(thumbnail(image))
+        self.open_chat_log()
+        self._event(lambda now: self.brain.say(now, "Ooh, lemme see~ What should I look at? (Or just press Enter.)",
+                                               "surprised"))
+
+    def stop_looking(self) -> None:
+        self.chat.stop_looking()
+        self._show_look(None)
+
+    def _show_look(self, thumb) -> None:
+        self._look_thumb = thumb
+        if self._chat_log is not None:
+            self._chat_log.set_look(thumb)
+        if self._chat_box is not None:
+            self._chat_box.set_looking(thumb is not None)
+
     def open_chat_settings(self) -> bool:
         """Menu: the Chat settings dialog. Returns True if saved."""
-        from .chat import load_key, save_key
+        from .chat import KEY_NAMES, MODEL_SETTINGS, load_key, save_key
         from .chatbox import ChatSettingsDialog
 
         secrets = data_dir() / "secrets.json"
-        dialog = ChatSettingsDialog(self.settings, load_key(secrets), self.pack.name)
+        keys = {name: load_key(secrets, name) for name in KEY_NAMES.values()}
+        dialog = ChatSettingsDialog(self.settings, keys, self.pack.name)
         if dialog.exec() != dialog.DialogCode.Accepted:
             return False
         provider = dialog.chosen_provider
         self._set("chat_provider", provider)
+        self._set(MODEL_SETTINGS[provider], dialog.chosen_model)
         if provider == "ollama":
             self._set("ollama_url", dialog.url.text().strip() or self.settings["ollama_url"])
-            self._set("ollama_model", dialog.chosen_model)
-        else:
-            self._set("chat_model", dialog.chosen_model)
-            if dialog.key.text().strip():
-                save_key(secrets, dialog.key.text())
+        elif dialog.key.text().strip():
+            save_key(secrets, dialog.key.text(), KEY_NAMES[provider])
         self.settings.save()
-        history = self.chat.history
+        history, seeing = self.chat.history, self.chat.seeing
         self.chat = self._make_chat()
         self.chat.history = history
+        if seeing is not None:
+            self.chat.show(seeing)
         self.speaker.openai.config.api_key = load_key(secrets)
         log.info("Chat settings saved (provider %s)", provider)
         return True
@@ -648,6 +735,7 @@ class Controller:
             self.act_update.setText(f"Update to {self._update.version}...")
         self.act_chat = action(f"Chat with {name}...", self.open_chat, "chat")
         self.act_chat_log = action("Today's chat", self.open_chat_log, "clock")
+        self.act_look = action("Look at my screen...", self.look_at_screen, "eye")
         self.act_talk = action("Talk to me", lambda: self._event(self.brain.on_talk_request), "sparkle")
         self.act_walk = action("Take a walk", self.take_walk, "walk")
         self.act_sleep = action("Go to sleep", self._toggle_sleep, "moon")
@@ -788,6 +876,7 @@ class Controller:
         QTimer.singleShot(0, self._rebuild_menu)
         self._set("character", pack.id)
         self.chat = self._make_chat()
+        self._look_thumb = None  # a new character hasn't seen your screen
         for attr in ("_chat_box", "_chat_log"):
             window = getattr(self, attr)
             if window is not None:

@@ -63,7 +63,7 @@ Double-click **`run_deskmate.bat`**. The first time, it sets itself up (about 1�
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 108 self-tests
+run_deskmate.bat --test        # run the 115 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -106,14 +106,16 @@ Right-click her → **Chat with Yuki...**, type, press Enter. She answers in her
 
 The first time, the **Chat settings** box opens. Pick her "chat brain":
 
-| | **OpenAI** | **Ollama** |
-|---|---|---|
-| Cost | Pay per message (a fraction of a cent) | Free |
-| Smartness | Best at staying in character | OK, depends on the model |
-| Privacy | Messages go to OpenAI | Everything stays on your PC |
-| Setup | Paste an [API key](https://platform.openai.com/api-keys) | Install [Ollama](https://ollama.com), run `ollama pull llama3.2` |
+| | **OpenAI** | **Claude** | **Ollama** |
+|---|---|---|---|
+| Cost | Pay per message (a fraction of a cent) | Pay per message (a fraction of a cent) | Free |
+| Smartness | Great at staying in character | Great at staying in character | OK, depends on the model |
+| Privacy | Messages go to OpenAI | Messages go to Anthropic | Everything stays on your PC |
+| Setup | Paste an [OpenAI API key](https://platform.openai.com/api-keys) | Paste an [Anthropic API key](https://console.anthropic.com) | Install [Ollama](https://ollama.com), run `ollama pull llama3.2` |
 
-- Leave **Model** empty or click **Pick for me**: DeskMate asks which models your key can use and picks a cheap "mini" one.
+You can save both an OpenAI and an Anthropic key and switch between them; each is stored under its own name. (The **Natural voice** always uses the OpenAI key.)
+
+- Leave **Model** empty or click **Pick for me**: DeskMate asks which models your key can use and picks a quick, cheap one (a "mini" model on OpenAI, Haiku on Claude).
 - **Today's chat** (in her menu, or the 🕘 button on the chat box) opens a window with the whole conversation as bubbles, with times and any reminders she set. Keep chatting there if you like.
 - She remembers what you talked about **today** (even after a restart), and starts fresh tomorrow. Right-click → Settings › **Forget today's chat** to clear it.
 - While you chat, she doesn't interrupt with reminders or wander off.
@@ -121,6 +123,22 @@ The first time, the **Chat settings** box opens. Pick her "chat brain":
 
 > [!IMPORTANT]
 > Your key is saved only on your PC, in `%APPDATA%\DeskMate\secrets.json`, never in this folder, so it can't end up on GitHub. Set a monthly spending limit on your OpenAI account to be safe. You can also use the `OPENAI_API_KEY` environment variable instead.
+
+### 👀 Show her your screen
+
+Stuck on an error, a form, a chart? Right-click her → **Look at my screen...** (or the 👁 button in the chat windows).
+
+1. She disappears for a moment and your screen freezes, a little dimmed.
+2. **Drag a box** over what she should look at. **Enter** = the whole screen, **Esc** = never mind.
+3. Today's chat opens with your picture. Type a question, or just press **Enter** ("Can you take a look at this?").
+
+She answers like a friend sitting next to you: one line in her bubble, and the real help in the chat window. Depending on what she sees, that's **steps** to fix it, a short **example** (code gets its own box), or a **question back** when she can't tell what you need, instead of guessing.
+
+For the next 5 minutes your follow-up questions still include the picture ("and this line?"). **Stop** in the chat window ends that early.
+
+- Works with all three brains. On Ollama, use a model that can see pictures (`ollama pull llama3.2-vision`); a text-only model makes her say her eyes don't work.
+- The picture is made only when you ask, kept only in memory, and sent only to your chat brain. It's never saved; today's chat file keeps only the words.
+- Big screens are shrunk to 1568 px on the long side first, so it stays quick and cheap.
 
 ### 🔊 Her voice
 
@@ -243,8 +261,9 @@ deskmate/
 ├── companion.py        her see-through window: drawing, animation, mouse
 ├── brain.py            moods and what to say (pure Python, fully tested)
 ├── bubble.py           speech bubble with typing effect
-├── chat.py             talking to OpenAI / Ollama (pure Python, tested with a fake server)
+├── chat.py             talking to OpenAI / Claude / Ollama (pure Python, tested with a fake server)
 ├── chatbox.py          the chat box, the Today's chat window and the Chat settings dialog
+├── look.py             "look at my screen": the drag-a-box overlay and the picture she gets
 ├── menu_style.py       her glass right-click menu (icons and switches drawn in code)
 ├── character.py        loads + checks character packs
 ├── settings.py         settings with safe saves
@@ -261,7 +280,7 @@ tools/make_blink.py          makes a blink picture from idle + sleep
 tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
-tests/                       108 tests (python -m unittest)
+tests/                       115 tests (python -m unittest)
 packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno Setup)
 .github/workflows/           tests on every push; a tagged push builds and publishes a release
 ```
@@ -279,9 +298,9 @@ GitHub Actions runs the tests on Windows, builds `DeskMate.exe`, makes the insta
 - ✅ **Phase 1 — Companion:** floating window, moods, speech, tray, safe settings.
 - ✅ **Phase 2 — Alive:** blinking, gravity, flinging, walking along the taskbar with a real walk cycle.
 - ✅ **Phase 3 — AI:** chat with her (OpenAI or a free local model with Ollama), she remembers your day.
-- **Phase 2½ — Perch:** sit on the top edge of your windows (Windows API).
-- **Phase 3½:** Claude as a third chat brain, a chat log window, voice.
-- **Phase 4 — Online:** a shared pet for your team on a small server.
+- ✅ **Phase 3½ — Extras:** sit on windows, wave / stretch / yawn, a chat log window, voice, Claude as a third chat brain, "a new version is out" notice.
+- **Phase 5 — She notices you:** ✅ look at your screen · talk to her with your voice · knows which app you're in · remembers you across days.
+- ⏸️ **Phase 4 — Online:** a shared pet for your team (on hold).
 
 ---
 
