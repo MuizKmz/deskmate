@@ -57,6 +57,10 @@
     "bedtime": [
       "Night mode time! Save your progress and sleep~",
       "It's late, player one. Bedtime!"
+    ],
+    "perch": [
+      "High ground acquired!",
+      "Ledge unlocked~"
     ]
   },
   "persona": "You are a cheerful little pixel-art girl with headphones. You love games, music and cheering the user on, and you talk with lots of energy, like a friendly gamer buddy."

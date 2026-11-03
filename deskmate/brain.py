@@ -50,7 +50,11 @@ LABELS = {
     "surprised": "surprised",
     "blush": "flustered",
     "talk": "talking",
+    "wave": "waving",
+    "stretch": "stretching",
+    "yawn": "yawning",
 }
+POSE_SECONDS = {"wave": 2.6, "stretch": 2.6, "yawn": 2.2}  # a gesture, not a face for the whole bubble
 
 
 @dataclass
@@ -159,7 +163,8 @@ class Brain:
         duration = speech_duration(text)
         self._speech.append(Speech(text, duration))
         self._speech_until = now + duration
-        self._react(expression or "talk", now, duration)
+        face = expression or "talk"
+        self._react(face, now, min(duration, POSE_SECONDS.get(face, duration)))
         return True
 
     def _late(self) -> bool:
@@ -191,8 +196,8 @@ class Brain:
             self._react("surprised", now, 1.0)
             return
         self._animations.append("hop")
-        if not self._say("wake", now, "surprised"):
-            self._react("surprised", now, 1.5)
+        if not self._say("wake", now, "wave"):  # you're back: she waves hello
+            self._react("wave", now, POSE_SECONDS["wave"])
 
     # ------------------------------------------------------------------- events
     def on_start(self, now: float) -> None:
@@ -206,13 +211,13 @@ class Brain:
         else:
             key = "greet_evening"
         self._animations.append("hop")
-        if not self._say(key, now, "happy"):
-            self._react("happy", now, 2.0)
+        if not self._say(key, now, "wave"):  # hello!
+            self._react("wave", now, POSE_SECONDS["wave"])
 
     def on_first_run(self, now: float) -> None:
         """The very first launch: introduce herself (falls back to a normal greeting)."""
         self._animations.append("hop")
-        if not self._say("intro", now, "happy"):
+        if not self._say("intro", now, "wave"):
             self.on_start(now)
 
     def on_pet(self, now: float) -> None:
@@ -319,9 +324,15 @@ class Brain:
         self._dragging = False
         self.last_interaction = now
 
-    def on_landed(self, now: float, impact: float) -> None:
-        """She touched down: ``impact`` is her landing speed (0 when simply put down)."""
+    def on_landed(self, now: float, impact: float, perched: bool = False) -> None:
+        """She touched down: ``impact`` is her landing speed (0 when simply put down).
+        ``perched``: she landed on top of a window."""
         self.last_interaction = now
+        if perched and impact < BIG_FALL:
+            if self.rng.random() < 0.6 and self._say("perch", now, "happy"):
+                return
+            self._react("happy", now, 1.5)
+            return
         if impact >= BIG_FALL:
             if not self._say("fall", now, "surprised"):
                 self._react("surprised", now, 1.2)
@@ -360,7 +371,7 @@ class Brain:
                 self._fall_asleep(now)
             elif idle >= SLEEPY_AFTER and self.base in ("idle", "pouty"):
                 self.base = "sleepy"
-                self._say("sleepy", now, "sleepy")
+                self._say("sleepy", now, "yawn")
 
         # Late at night she gets sleepy too (and says so once per night).
         if self.base == "idle" and late:
@@ -368,7 +379,7 @@ class Brain:
             today = self.wallclock().date()
             if self._late_day != today:
                 self._late_day = today
-                self._say("late", now, "sleepy")
+                self._say("late", now, "yawn")
         elif self.base == "sleepy" and not late and not away:
             self.base = "idle"
 
@@ -409,14 +420,14 @@ class Brain:
                 self._say("water", now)
             elif now - self._active_since >= BREAK_AFTER:
                 self._active_since = now
-                self._say("break", now)
+                self._say("break", now, "stretch")
 
         # Still working late at night? A gentle "go to bed" now and then.
         hour = self.wallclock().hour
         if (self.reminders and awake and user_active and not chatting and not self._speaking(now)
                 and (hour >= BEDTIME_FROM or hour in LATE_HOURS) and now - self._last_bedtime >= BEDTIME_EVERY):
             self._last_bedtime = now
-            self._say("bedtime", now, "sleepy")
+            self._say("bedtime", now, "yawn")
 
         # Random chit-chat.
         if self.chatty and self.base == "idle" and user_active and not chatting and now >= self._next_chatter:

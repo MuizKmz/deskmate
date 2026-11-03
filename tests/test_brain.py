@@ -8,7 +8,7 @@ from deskmate.brain import Brain
 LINES = {key: [f"<{key}>"] for key in (
     "intro", "greet_morning", "greet_afternoon", "greet_evening", "greet_night", "pet", "too_much",
     "drag", "drop", "sleepy", "goodnight", "wake", "ignored", "forgive", "late", "water", "break", "random",
-    "fall", "wander",
+    "fall", "wander", "perch",
 )}
 
 
@@ -38,7 +38,7 @@ class StartTests(unittest.TestCase):
             brain, _ = make(hour)
             brain.on_start(0)
             self.assertEqual(texts(brain), [f"<{key}>"])
-            self.assertEqual(brain.expression(0.1), "happy")
+            self.assertEqual(brain.expression(0.1), "wave")  # hello!
             self.assertIn("hop", brain.drain_animations())
 
     def test_first_run_introduces_herself(self):
@@ -90,7 +90,7 @@ class SleepTests(unittest.TestCase):
         brain.tick(300, user_idle=1)
         self.assertFalse(brain.asleep)
         self.assertEqual(texts(brain), ["<wake>"])
-        self.assertEqual(brain.expression(300.5), "surprised")
+        self.assertEqual(brain.expression(300.5), "wave")  # you're back: she waves
 
     def test_short_pause_does_nothing(self):
         brain, _ = make()
@@ -215,6 +215,17 @@ class DragAndHoverTests(unittest.TestCase):
         self.assertIn("<fall>", texts(brain))  # (a "drag" line may come first)
         self.assertEqual(brain.expression(7.2), "surprised")
 
+    def test_landing_on_a_window_is_a_happy_moment(self):
+        brain, _ = make()
+        said = []
+        for t in range(10, 200, 10):
+            brain.on_landed(t, impact=600.0, perched=True)
+            said += texts(brain)
+        self.assertIn("<perch>", said)
+        self.assertNotIn("<fall>", said)
+        brain.on_landed(300, impact=2400.0, perched=True)  # a hard landing still hurts
+        self.assertIn("<fall>", texts(brain))
+
     def test_mouse_resting_on_her_makes_her_blush(self):
         brain, _ = make()
         brain.on_hover(0, True)
@@ -292,6 +303,38 @@ class ReminderAndBedtimeTests(unittest.TestCase):
                 brain.last_interaction = t
                 brain.tick(t, user_idle=idle)
             self.assertNotIn("<bedtime>", texts(brain), (hour, idle, kwargs))
+
+
+class PoseTests(unittest.TestCase):
+    def test_yawns_when_sleepy_and_stretches_with_the_break_reminder(self):
+        brain, _ = make(chatty=False)
+        brain.tick(100, user_idle=B.SLEEPY_AFTER + 1)
+        self.assertEqual(brain.expression(100.5), "yawn")
+        self.assertEqual(brain.expression(100 + B.POSE_SECONDS["yawn"] + 0.1), "sleepy")  # a short yawn
+        brain, _ = make(chatty=False)
+        brain._last_water = 1e9
+        for t in range(0, B.BREAK_AFTER + 10, 30):
+            brain.on_hover(t, False)
+            brain.last_interaction = t
+            brain.tick(t, user_idle=1)
+            if "<break>" in texts(brain):
+                self.assertEqual(brain.expression(t + 0.5), "stretch")
+                break
+        else:
+            self.fail("no break reminder")
+
+    def test_packs_without_the_poses_use_a_close_match(self):
+        from pathlib import Path
+
+        from deskmate.character import CharacterPack
+
+        pack = CharacterPack("x", Path("."), "X", {}, {"idle": None, "happy": None, "sleepy": None},
+                             {}, {}, None, (0.5, 0.2, 0.0))
+        self.assertEqual(pack.resolve("wave"), "happy")
+        self.assertEqual(pack.resolve("stretch"), "happy")
+        self.assertEqual(pack.resolve("yawn"), "sleepy")
+        pack.animations["wave"] = None
+        self.assertEqual(pack.resolve("wave"), "wave")
 
 
 class DurationTests(unittest.TestCase):

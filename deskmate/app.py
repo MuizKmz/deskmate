@@ -242,6 +242,7 @@ class Controller:
 
     # ----------------------------------------------------------------- start
     def start(self, first_run: bool = False) -> None:
+        self._apply_perch()
         self.companion.place(self.settings["position"])
         if self.settings["visible"] or self.tray is None:
             self.companion.show()
@@ -300,7 +301,7 @@ class Controller:
         self._event(self.brain.on_drag_end)
 
     def _on_landed(self, impact: float) -> None:
-        self._event(lambda now: self.brain.on_landed(now, impact))
+        self._event(lambda now: self.brain.on_landed(now, impact, self.companion.perched))
         self._remember_position()
         if self._walk_after_landing:
             self._walk_after_landing = False
@@ -656,6 +657,11 @@ class Controller:
         self.act_gravity = toggle("Gravity (falls to the taskbar)", self._set_gravity, self.settings["gravity"],
                                   settings)
         self.act_wander = toggle("Wander around", self._set_wander, self.settings["wander"], settings)
+        from . import perch
+
+        self.act_perch = None
+        if perch.supported():
+            self.act_perch = toggle("Sit on windows", self._set_perch, self.settings["perch"], settings)
         self.act_care = toggle("Care reminders (water, breaks, bedtime)", self._set_reminders,
                                self.settings["reminders"], settings)
         self.act_autostart = None
@@ -815,6 +821,22 @@ class Controller:
     def _set_wander(self, on: bool) -> None:
         self.brain.wander = bool(on)
         self._set("wander", bool(on))
+
+    def _set_perch(self, on: bool) -> None:
+        self._set("perch", bool(on))
+        self._apply_perch()
+
+    def _apply_perch(self) -> None:
+        """Let her sit on window tops (Windows only, and only if switched on)."""
+        from . import perch
+
+        source = None
+        if perch.supported() and self.settings["perch"]:
+            try:
+                source = perch.WindowsLedges(perch.qt_to_logical())
+            except Exception:
+                log.exception("Can't read the window list; she'll stay on the taskbar")
+        self.companion.set_ledge_source(source)
 
     def _set_reminders(self, on: bool) -> None:
         self.brain.reminders = bool(on)

@@ -29,7 +29,8 @@ log = logging.getLogger(__name__)
 
 REQUIRED = ("idle",)
 PHASE1 = ("happy", "sleepy", "sleep", "pouty", "surprised", "blush", "talk")
-KNOWN = ("idle", "blink", *PHASE1, "walk", "drag", "fall")
+POSES = ("wave", "stretch", "yawn")  # optional little gestures
+KNOWN = ("idle", "blink", *PHASE1, "walk", "drag", "fall", *POSES)
 ONE_SHOT = {"blink", "fall"}  # animations that play once instead of looping
 DEFAULT_FPS = 6.0
 MAX_LINE_LENGTH = 160
@@ -49,6 +50,7 @@ DEFAULT_LINES: dict[str, list[str]] = {
     "drop": ["Here is nice.", "Okay, I'll stay here."],
     "fall": ["Oof!", "Ouch... I'm okay!"],
     "wander": ["Let's go over here~"],
+    "perch": ["Nice view from up here!"],
     "sleepy": ["*yawn*..."],
     "goodnight": ["Good night..."],
     "wake": ["Mmh...? Oh! You're back!"],
@@ -112,6 +114,9 @@ class CharacterPack:
             return name
         if name == "sleep" and "sleepy" in self.animations:
             return "sleepy"
+        stand_in = {"wave": "happy", "stretch": "happy", "yawn": "sleepy"}.get(name)  # pack without that pose
+        if stand_in and stand_in in self.animations:
+            return stand_in
         return "idle"
 
 

@@ -1,6 +1,7 @@
 """End-to-end checks of the real windows, run invisibly (Qt "offscreen" mode)."""
 
 import os
+import sys
 import tempfile
 import time
 import unittest
@@ -245,6 +246,111 @@ class QtSmokeTests(unittest.TestCase):
         self.assertFalse(companion.start_wander())  # no strolling without gravity
         companion.close()
 
+    def test_perching_on_windows(self):
+        from deskmate.perch import Ledge
+
+        companion, clock = self.physics_companion()
+        avail = companion.available_rect()
+        feet_x = companion.pos().x() + companion._feet_local().x()
+
+        class Windows:
+            """Pretend open windows (what perch.WindowsLedges reads from Windows for real)."""
+
+            def __init__(self):
+                self.items = {}
+
+            def ledges(self):
+                return sorted(self.items.values(), key=lambda w: w.z)
+
+            def ledge(self, window_id):
+                return self.items.get(window_id)
+
+        windows = Windows()
+        top = avail.top() + avail.height() * 0.6
+        windows.items[1] = Ledge(1, feet_x - 200, feet_x + 200, top, top + 300, z=1)
+        companion.set_ledge_source(windows)
+        landed = []
+        companion.landed.connect(landed.append)
+
+        # Dropped from above, she lands on the window, not the taskbar.
+        companion.move(companion.pos().x(), int(avail.top() + 10))
+        companion._start_fall(0.0, 0.0)
+        self.assertTrue(self.step(companion, clock, 3.0, until=lambda: not companion.falling))
+        self.assertTrue(companion.perched)
+        self.assertAlmostEqual(companion.pos().y() + companion._feet_local().y(), top, delta=1)
+        self.assertTrue(companion.on_floor())
+        self.assertEqual(len(landed), 1)
+
+        # The window moves: she rides along.
+        old = companion.pos()
+        windows.items[1] = Ledge(1, feet_x - 150, feet_x + 250, top - 40, top + 260, z=1)
+        companion.check_perch()
+        self.assertEqual((companion.pos().x() - old.x(), companion.pos().y() - old.y()), (50, -40))
+
+        # She strolls, but only along the top of her window.
+        self.assertTrue(companion.start_wander(target_x=companion.pos().x() + 2000))
+        self.step(companion, clock, 15.0, until=lambda: not companion.walking)
+        feet = companion.pos().x() + companion._feet_local().x()
+        self.assertTrue(windows.items[1].left <= feet <= windows.items[1].right)
+        self.assertTrue(companion.perched)
+
+        # The window closes: she falls to the taskbar.
+        del windows.items[1]
+        companion.check_perch()
+        self.assertTrue(companion.falling)
+        self.assertTrue(self.step(companion, clock, 5.0, until=lambda: not companion.falling and companion.on_floor()))
+        self.assertFalse(companion.perched)
+        self.assertEqual(companion.pos().y(), companion.floor_y())
+        companion.close()
+
+    @unittest.skipUnless(sys.platform == "win32", "reads real windows, Windows only")
+    def test_reading_real_windows(self):
+        from deskmate.perch import WindowsLedges, qt_to_logical
+
+        source = WindowsLedges(qt_to_logical())
+        ledges = source.ledges()  # whatever happens to be open; it must simply work
+        for ledge in ledges:
+            self.assertLess(ledge.left, ledge.right)
+            self.assertLess(ledge.top, ledge.bottom)
+        if ledges:
+            self.assertEqual(source.ledge(ledges[0].id).id, ledges[0].id)
+        self.assertIsNone(source.ledge(0))
+
+    def test_perching_skips_covered_and_too_high_window_tops(self):
+        from deskmate.perch import Ledge
+
+        companion, clock = self.physics_companion()
+        avail = companion.available_rect()
+        feet_x = companion.pos().x() + companion._feet_local().x()
+        top = avail.top() + avail.height() * 0.6
+
+        class Windows:
+            def __init__(self, items):
+                self.items = items
+
+            def ledges(self):
+                return self.items
+
+            def ledge(self, window_id):
+                return next((w for w in self.items if w.id == window_id), None)
+
+        # Window 2's top is hidden behind window 1 (in front), and window 3 is too near the
+        # top of the screen for her to fit above it: she ends up on the taskbar.
+        front = Ledge(1, feet_x - 300, feet_x + 300, top - 100, top + 200, z=0)
+        hidden = Ledge(2, feet_x - 100, feet_x + 100, top, top + 150, z=1)
+        too_high = Ledge(3, feet_x - 100, feet_x + 100, avail.top() + 20, avail.top() + 400, z=2)
+        companion.set_ledge_source(Windows([front, hidden, too_high]))
+        companion.move(companion.pos().x(), int(avail.top()))
+        companion._start_fall(0.0, 0.0)
+        self.step(companion, clock, 3.0, until=lambda: not companion.falling)
+        self.assertEqual(companion._perch.id, 1)  # lands on the front window, the only good seat
+        # Grab her and drop her below every window: back to the taskbar.
+        companion.set_ledge_source(None)
+        self.step(companion, clock, 5.0, until=lambda: not companion.falling and companion.on_floor())
+        self.assertFalse(companion.perched)
+        self.assertEqual(companion.pos().y(), companion.floor_y())
+        companion.close()
+
     def test_blinking(self):
         companion, clock = self.physics_companion(with_blink=True)
         companion.set_expression("idle")
@@ -314,6 +420,7 @@ class QtSmokeTests(unittest.TestCase):
         fake.reply = "[blush] W-well... thank you~"
         with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
             settings = Settings(Path(home) / "settings.json")
+            settings["perch"] = False  # never sit on the test machine's real windows
             pack = load_pack(self.root)
             brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5), wallclock=noon)
             controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
@@ -371,6 +478,7 @@ class QtSmokeTests(unittest.TestCase):
         self.addCleanup(fake.close)
         with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
             settings = Settings(Path(home) / "settings.json")
+            settings["perch"] = False  # never sit on the test machine's real windows
             pack = load_pack(self.root)
             brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5), wallclock=noon)
             controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
@@ -440,6 +548,7 @@ class QtSmokeTests(unittest.TestCase):
             (Path(home) / "reminders.json").write_text(json.dumps(
                 {"reminders": [{"id": "old1", "due": missed_at, "text": "water the plants"}]}), encoding="utf-8")
             settings = Settings(Path(home) / "settings.json")
+            settings["perch"] = False  # never sit on the test machine's real windows
             pack = load_pack(self.root)
             lines = dict(pack.lines, reminder=["Time: {what}!"], reminder_missed=["Missed: {what}"],
                          reminder_set=["Set for {time}"])
@@ -507,6 +616,7 @@ class QtSmokeTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
             settings = Settings(Path(home) / "settings.json")
+            settings["perch"] = False  # never sit on the test machine's real windows
             pack = load_pack(self.root)
             brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(3), wallclock=noon)
             with self.assertLogs("deskmate", level="INFO") as captured:

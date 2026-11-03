@@ -79,6 +79,8 @@ WALK_SPEED = 75.0  # at medium size; hop-walk when the pack has no walk pictures
 STEP_SPEED = 110.0  # with real walk pictures (matches their stride at 4.5 fps)
 WALK_HOP_SECONDS, WALK_HOP_HEIGHT = 0.34, 0.022
 WANDER_DISTANCE = (120.0, 380.0)  # at medium size
+PERCH_CHECK_MS = 300  # how often she checks the window she's sitting on
+LEDGE_REFRESH = 0.25  # seconds between window lists while falling
 
 
 # ------------------------------------------------------------------------ images
@@ -158,6 +160,13 @@ class Companion(QWidget):
         self._clock = clock
         self._rng = rng or random.Random()
         self._t0 = clock()
+        self._ledge_source = None  # where window tops come from (Windows only; tests pass a fake)
+        self._perch = None         # the window top she's sitting on, if any
+        self._ledges: list = []
+        self._ledges_at = -1e9
+        self._perch_timer = QTimer(self)
+        self._perch_timer.setInterval(PERCH_CHECK_MS)
+        self._perch_timer.timeout.connect(self.check_perch)
         self._size = size if size in SIZES else "medium"
         self._load_pack(pack, frames)
         self._cache: dict[tuple[str, int, bool], QPixmap] = {}
@@ -314,8 +323,84 @@ class Companion(QWidget):
         """Window y at which her feet stand on the taskbar."""
         return int(self._limits(self._ground_rect(pos))[3])
 
+    def ground_y(self) -> int:
+        """Window y where she stands right now: on her window's top edge, or on the taskbar."""
+        if self._perch is not None:
+            return int(round(self._perch.top - self._feet_local().y()))
+        return self.floor_y()
+
     def on_floor(self) -> bool:
-        return abs(self.pos().y() - self.floor_y()) <= 2
+        return abs(self.pos().y() - self.ground_y()) <= 2
+
+    # ------------------------------------------------------------ perching
+    def set_ledge_source(self, source) -> None:
+        """Something with .ledges() and .ledge(id) (see perch.py), or None to stop sitting on windows."""
+        self._ledge_source = source
+        if source is None and self._perch is not None:
+            self._unperch(fall=True)
+
+    @property
+    def perched(self) -> bool:
+        return self._perch is not None
+
+    def _feet_x(self, window_x: float | None = None) -> float:
+        return (self.pos().x() if window_x is None else window_x) + self._feet_local().x()
+
+    def _unperch(self, fall: bool) -> None:
+        self._perch = None
+        self._perch_timer.stop()
+        if fall and self._gravity and self.isVisible() and not self._dragging:
+            self._start_fall(0.0, 0.0)
+
+    def check_perch(self) -> None:
+        """Is her window still there? Ride along if it moved; fall if it closed or slid away."""
+        if self._perch is None or self._ledge_source is None:
+            self._perch_timer.stop()
+            return
+        if self._dragging or self._falling:
+            return
+        try:
+            now = self._ledge_source.ledge(self._perch.id)
+        except Exception:
+            now = None
+        if now is None:
+            self._unperch(fall=True)
+            return
+        dx, dy = now.left - self._perch.left, now.top - self._perch.top
+        self._perch = now
+        if dx or dy:
+            if self._walk is not None:
+                target, started = self._walk
+                self._walk = (target + dx, started)
+                self._fx += dx
+            self.move(QPoint(int(round(self.pos().x() + dx)), self.ground_y()))
+        if not now.holds(self._feet_x()):
+            self._unperch(fall=True)
+
+    def _refresh_ledges(self, now: float) -> None:
+        if self._ledge_source is None or now - self._ledges_at < LEDGE_REFRESH:
+            return
+        self._ledges_at = now
+        try:
+            self._ledges = list(self._ledge_source.ledges())
+        except Exception:
+            self._ledges = []
+
+    def _ledge_below(self, feet_x: float, old_feet: float, new_feet: float, avail: QRect):
+        """The first window top her feet pass through on the way down (if it's a sensible seat)."""
+        from .perch import covered
+
+        best = None
+        for ledge in self._ledges:
+            if not ledge.holds(feet_x) or not (old_feet <= ledge.top <= new_feet):
+                continue
+            if ledge.top - self._H < avail.top() or ledge.top > avail.bottom() - 30:
+                continue  # her head would poke off the screen, or it's basically the taskbar
+            if covered(self._ledges, ledge, feet_x):
+                continue
+            if best is None or ledge.top < best.top:
+                best = ledge
+        return best
 
     def default_pos(self) -> QPoint:
         screen = QGuiApplication.primaryScreen()
@@ -351,6 +436,7 @@ class Companion(QWidget):
         else:
             self._falling = False
             self._walk = None
+            self._unperch(fall=False)
 
     @property
     def gravity(self) -> bool:
@@ -382,6 +468,7 @@ class Companion(QWidget):
 
     def reset_position(self) -> None:
         self._stop_moving()
+        self._unperch(fall=False)
         self._animate_to(self.default_pos())
 
     def settle(self) -> None:
@@ -395,10 +482,17 @@ class Companion(QWidget):
                 or not self.isVisible() or not self.on_floor()):
             return False
         min_x, max_x, _min_y, _max_y = self._limits(self._ground_rect())
+        if self._perch is not None:  # sitting on a window: stroll along its top only
+            feet = self._feet_local().x()
+            min_x = max(min_x, self._perch.left - feet + 12)
+            max_x = min(max_x, self._perch.right - feet - 12)
+            if max_x - min_x < 40:
+                return False
         x = float(self.pos().x())
         if target_x is None:
             size = self._H / SIZES["medium"]
             distance = self._rng.uniform(*WANDER_DISTANCE) * size
+            distance = min(distance, (max_x - min_x) * 0.6)
             direction = self._rng.choice((-1, 1))
             if not (min_x + 8 <= x + direction * distance <= max_x - 8):
                 direction = -direction
@@ -519,6 +613,9 @@ class Companion(QWidget):
     # --------------------------------------------------------------- physics
     def _start_fall(self, vx: float, vy: float) -> None:
         self._walk = None
+        self._perch = None
+        self._perch_timer.stop()
+        self._ledges_at = -1e9
         if self._settle_anim is not None:
             self._settle_anim.stop()
         self._fx, self._fy = float(self.pos().x()), float(self.pos().y())
@@ -532,9 +629,26 @@ class Companion(QWidget):
     def _fall_step(self, dt: float, now: float) -> None:
         self._fall_vy = min(MAX_FALL_SPEED, self._fall_vy + GRAVITY * dt)
         self._fall_vx *= math.exp(-AIR_DRAG * dt)
+        old_fy = self._fy
         self._fx += self._fall_vx * dt
         self._fy += self._fall_vy * dt
-        min_x, max_x, min_y, floor = self._limits(self._ground_rect(QPoint(int(self._fx), int(self._fy))))
+        avail = self._ground_rect(QPoint(int(self._fx), int(self._fy)))
+        min_x, max_x, min_y, floor = self._limits(avail)
+        if self._ledge_source is not None and self._fall_vy > 0:
+            self._refresh_ledges(now)
+            feet_y = self._feet_local().y()
+            ledge = self._ledge_below(self._feet_x(self._fx), old_fy + feet_y, self._fy + feet_y, avail)
+            if ledge is not None:  # land on the window's top edge (no bounce: it's a soft landing)
+                self._fy = ledge.top - feet_y
+                self._fall_impact = self._fall_impact or self._fall_vy
+                self._effects["land"] = now
+                self._falling = False
+                self._fall_vx = self._fall_vy = 0.0
+                self._perch = ledge
+                self._perch_timer.start()
+                self.move(QPoint(int(round(self._fx)), int(round(self._fy))))
+                self.landed.emit(float(self._fall_impact))
+                return
         if self._fx < min_x:
             self._fx, self._fall_vx = min_x, abs(self._fall_vx) * WALL_BOUNCE
         elif self._fx > max_x:
@@ -567,7 +681,7 @@ class Companion(QWidget):
             self._effects["land"] = now
         else:
             self._fx += math.copysign(speed * dt, remaining)
-        self.move(QPoint(int(round(self._fx)), self.floor_y()))
+        self.move(QPoint(int(round(self._fx)), self.ground_y()))
 
     def _stop_moving(self) -> None:
         self._falling = False
@@ -738,6 +852,8 @@ class Companion(QWidget):
             self._settle_anim.stop()
         if self._falling or self._walk is not None:
             self._stop_moving()  # catch her mid-air / stop her walk
+        if self._perch is not None:
+            self._unperch(fall=False)  # picked up off her window
         self._armed = True
         self._press_global = event.globalPosition().toPoint()
         self._press_pos = self.pos()
@@ -851,6 +967,7 @@ class Companion(QWidget):
     def hideEvent(self, event) -> None:
         self._timer.stop()
         self._stop_moving()
+        self._unperch(fall=False)
         super().hideEvent(event)
 
     def _on_screen_changed(self, *_args) -> None:

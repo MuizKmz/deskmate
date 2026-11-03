@@ -26,8 +26,9 @@ dozes off when you leave, pouts when you ignore her, and reminds you to drink wa
 |---|---|
 | 🪟 **Floats on your screen** | Real transparency (smooth edges, no box), always on top, and she doesn't show up in the taskbar. |
 | 🖱️ **Reacts to you** | Click to pat her, drag her anywhere (she swings while you carry her), rest the mouse on her and she gets shy. |
-| 🍃 **Feels alive** | Blinks, breathes, and now and then walks along the taskbar on her own (real steps, not sliding). |
+| 🍃 **Feels alive** | Blinks, breathes, and now and then walks along the taskbar on her own (real steps, not sliding). Waves hello when you come back, yawns when she gets sleepy, stretches with you on breaks. |
 | 🪂 **Has gravity** | Drop her in mid-air and she falls to the taskbar with a squash. Fling her and she flies, bounces off the screen edges and lands ("Ow ow ow..."). |
+| 🪟 **Sits on your windows** | Drop her above a window and she lands on its top edge. Move the window and she rides along; close or minimise it and down she goes. |
 | 😴 **Lives with your day** | Gets sleepy when you step away, falls asleep, and wakes up when you come back. Sleepy late at night too. |
 | 😤 **Has feelings** | Pouts if you work for ages without saying hi. One pat and she forgives you. |
 | 💧 **Takes care of you** | Gentle reminders to drink water, stretch, and go to bed when you work past 11 pm (can be switched off). |
@@ -60,7 +61,7 @@ Double-click **`run_deskmate.bat`**. The first time, it sets itself up (about 1�
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 86 self-tests
+run_deskmate.bat --test        # run the 92 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -80,13 +81,14 @@ python -m venv .venv
 | **Drag** her | Surprised face, swings like a pendulum |
 | **Let go** in mid-air | She falls to the taskbar and lands with a squash |
 | **Fling** her | She flies with your swipe, bounces off the screen edge, and complains a little if she lands hard |
+| **Drop** her above a window | She sits on its top edge and rides along when you move it |
 | Leave her be | She blinks, breathes, and wanders to a new spot every minute or two |
 | Right-click → **Take a walk** | She walks along the taskbar right now |
 | **Rest the mouse** on her | Blushes |
 | **Right-click** her (or the tray icon) | The menu ⬇️ |
 | Click the **tray icon** | Hide / show her |
 
-**Menu:** a glass card in her colours, with her face and mood at the top. Chat with Yuki · Today's chat · Talk to me · Take a walk · Go to sleep / Wake up · Reminders · Character · Size · **Settings** › (switches for Always on top, Chit-chat, Gravity, Wander around, Care reminders, Start with Windows · Chat settings · Forget today's chat · Move back to the corner · Open settings & logs folder) · Hide · Quit
+**Menu:** a glass card in her colours, with her face and mood at the top. Chat with Yuki · Today's chat · Talk to me · Take a walk · Go to sleep / Wake up · Reminders · Character · Size · **Settings** › (switches for Always on top, Chit-chat, Gravity, Wander around, Sit on windows, Care reminders, Start with Windows · Chat settings · Forget today's chat · Move back to the corner · Open settings & logs folder) · Hide · Quit
 
 <img src="docs/menu.png" alt="Her right-click menu: a dark glass card with her avatar, mood, icons and switches" width="520">
 
@@ -172,6 +174,7 @@ characters/
     ├── happy/happy_01.png
     ├── sleepy/ sleep/ pouty/ surprised/ blush/ talk/
     └── blink/  walk/ ...   ← several numbered images = an animation
+                              (optional poses: wave/ stretch/ yawn/)
 ```
 
 - Missing expressions fall back to `idle`, so you can start with one picture.
@@ -193,6 +196,12 @@ characters/
 
 ```powershell
 .venv\Scripts\python tools\add_frames.py characters\yuki walk walk1.png walk2.png walk3.png walk4.png --fps 4.5
+```
+
+For front-facing poses where her arms go above her head (waving, stretching), add `--fit feet` so she's sized by her slippers instead of her height:
+
+```powershell
+.venv\Scripts\python tools\add_frames.py characters\yuki wave wave1.png wave2.png --fps 4 --fit feet --zoom 0.94
 ```
 
 ---
@@ -228,6 +237,7 @@ deskmate/
 ├── single_instance.py  only one DeskMate at a time
 ├── sysidle.py          "is the user away?" (Windows idle time)
 ├── autostart.py        Start with Windows
+├── perch.py            the window tops she can sit on (asks Windows for the open windows)
 └── logsetup.py         log file, even with no console
 tools/prepare_character.py   picture clean-up → character pack
 tools/draw_pixel_character.py  draws Piko in code
@@ -235,7 +245,7 @@ tools/make_blink.py          makes a blink picture from idle + sleep
 tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
-tests/                       86 tests (python -m unittest)
+tests/                       92 tests (python -m unittest)
 packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno Setup)
 .github/workflows/           tests on every push; a tagged push builds and publishes a release
 ```

@@ -272,6 +272,28 @@ self._vx = 0.6 * self._vx + 0.4 * (point.x() - last_x) / elapsed
 
 While you hold her still, that speed fades away (`exp(−3.8·dt)` each frame), so carrying her somewhere and letting go gently doesn't fling her. When she lands, the `landed(impact)` signal tells the brain how hard she hit the ground: a big fall gets "Ow ow ow...", a soft one a happy face.
 
+### Perching: windows are just more floors
+
+`perch.py` asks Windows for the open windows (`EnumWindows`, through `ctypes`) and turns each one into a **ledge**: its left, right and top in Qt's pixels. It skips minimised, maximised and invisible windows, windows on other virtual desktops ("cloaked"), and DeskMate's own windows.
+
+The physics doesn't know about Windows at all. Each frame while she falls, `_ledge_below()` asks one question: *did her feet just pass through the top of a ledge?*
+
+```python
+if ledge.holds(feet_x) and old_feet <= ledge.top <= new_feet and not covered(ledges, ledge, feet_x):
+    land_on(ledge)
+```
+
+`covered()` checks the stacking order (`z`), so she won't land on a window top that's hidden behind another window. While she sits, `check_perch()` re-reads her window about 3 times a second: it moved → she moves by the same amount; it's gone → she falls.
+
+Two details that bite everyone who tries this:
+
+| Gotcha | Fix |
+|---|---|
+| `GetWindowRect` includes Windows 10/11's invisible resize borders, so the edges it reports are a little off from what you see | Ask DWM for `DWMWA_EXTENDED_FRAME_BOUNDS`, the frame you actually see |
+| Windows reports physical pixels; Qt uses logical ones (125% scaling: 1.25 physical per logical) | `qt_to_logical()` converts per monitor, so mixed-scaling setups work |
+
+Because the physics only sees plain ledges, `test_perching_on_windows` can fake windows (open, move, close) and run on any computer. Only the small Windows-reading part needs a real Windows machine, and GitHub's runs it on every push.
+
 ### Wandering: the brain says *when*, the window says *how*
 
 ```
@@ -372,7 +394,7 @@ Running from source needs Python. Real users want a download that just works. Th
 ```mermaid
 flowchart LR
     T["git push origin v0.3.0"] --> GA[GitHub Actions<br/>Windows machine]
-    GA --> TS[Run the 86 tests]
+    GA --> TS[Run the 92 tests]
     TS --> PI["PyInstaller<br/>DeskMate.exe + _internal"]
     PI --> CK["DeskMate.exe --check"]
     CK --> IS[Inno Setup<br/>installer]
@@ -470,11 +492,11 @@ Add Anthropic's Claude next to OpenAI and Ollama.
 Claude uses its own format: `POST https://api.anthropic.com/v1/messages` with the headers `x-api-key` and `anthropic-version: 2023-06-01`, the system prompt as a separate `"system"` field, a required `"max_tokens"`, and the answer in `content[0].text`. Add a `"claude"` provider in `ChatConfig`, a small branch in `ChatSession.ask`, and a test against a fake server like `tests/fake_openai.py`.
 </details>
 
-### 🔴 Sit on window edges
-Drop her onto a window and she sits on its top edge, like the classic Shimeji pets.
+### 🔴 Peek from behind a window
+When she's sitting on a window and you drag another window over her, she ducks down and peeks over its edge.
 <details><summary>💡 Hint</summary>
 
-On Windows, list windows with `EnumWindows` + `IsWindowVisible` through `ctypes`, skipping minimised ones and "cloaked" ones on other virtual desktops (`DwmGetWindowAttribute` with `DWMWA_CLOAKED`). Use `DWMWA_EXTENDED_FRAME_BOUNDS` for the real frame, because `GetWindowRect` includes invisible borders. In `_fall_step`, a window's top edge counts as a floor if her feet cross it from above. Then check about once a second that the window is still there and hasn't moved, and let her fall if it has. Mind the scaling: Windows gives physical pixels, Qt uses logical ones (divide by `devicePixelRatio`).
+`perch.covered()` already knows when a spot is hidden by a window in front. In `check_perch`, test her head instead of her feet; if it's covered, show a `peek` animation and move her down a little. Read how `test_perching_on_windows` fakes the windows, and write the test first.
 </details>
 
 ---

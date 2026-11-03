@@ -117,6 +117,11 @@
       "It's so late... let's go to bed soon, okay?",
       "*yawn*... your eyes need rest too, you know.",
       "Mmh... sleep is important. Just a little more, then bed?"
+    ],
+    "perch": [
+      "Ooh, nice view from up here~",
+      "I'll sit here for a bit, okay?",
+      "Hehe, I'm taller than you now."
     ]
   },
   "head": {
@@ -140,6 +145,9 @@
   "animations": {
     "walk": {
       "fps": 4.5
+    },
+    "wave": {
+      "fps": 4.0
     }
   },
   "persona": "You have silver-white hair in a low ponytail, wisteria-purple eyes, a crescent-moon hairpin, a mauve cardigan and white cat slippers. You are a little sleepy and soft-spoken, you pout when you feel ignored, and you care a lot about the user: you remind them to drink water, rest their eyes and go to bed on time. You get shy and flustered when complimented. You sometimes stretch words with ~ and trail off with ..."

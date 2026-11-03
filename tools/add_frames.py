@@ -33,6 +33,13 @@ def body_box(alpha: np.ndarray) -> tuple[int, int]:
     return int(rows.min()), int(rows.max())
 
 
+def feet_span(alpha: np.ndarray, bottom: int, depth: int) -> tuple[float, float]:
+    """Left and right edge of her slippers (the lowest ``depth`` rows of her body)."""
+    band = alpha[max(0, bottom - depth): bottom + 1] > 0.5
+    cols = np.where(band.any(axis=0))[0]
+    return float(cols.min()), float(cols.max())
+
+
 def head_centre_x(alpha: np.ndarray, top: int, height: int) -> float:
     """Middle of her head, measured on the top 12% of her body (hair only, no ponytail tip)."""
     band = alpha[top: top + max(4, int(0.12 * height))] > 0.5
@@ -46,7 +53,11 @@ def main(argv=None) -> int:
     parser.add_argument("animation", help="animation name, e.g. walk")
     parser.add_argument("pictures", nargs="+", type=Path, help="frames in order")
     parser.add_argument("--fps", type=float, help="frames per second for this animation")
+    parser.add_argument("--fit", choices=("height", "feet"), default="height",
+                        help="height: same height as idle (walking). feet: same slippers as idle, for front-facing "
+                             "poses where arms go above her head (waving, stretching)")
     parser.add_argument("--preview", type=Path, help="also save a strip of idle + all frames here")
+    parser.add_argument("--zoom", type=float, default=1.0, help="extra size factor, e.g. 0.95 = 5%% smaller")
     args = parser.parse_args(argv)
 
     idle = np.asarray(Image.open(args.pack / "idle" / "idle_01.png").convert("RGBA"), np.float32) / 255.0
@@ -54,6 +65,8 @@ def main(argv=None) -> int:
     i_top, i_bottom = body_box(idle[..., 3])
     i_height = i_bottom - i_top
     i_head = head_centre_x(idle[..., 3], i_top, i_height)
+    depth = max(4, int(0.04 * i_height))
+    i_feet = feet_span(idle[..., 3], i_bottom, depth)
 
     from rembg import new_session
 
@@ -70,11 +83,19 @@ def main(argv=None) -> int:
         alpha = clean_alpha(cut_out(rgb, session), distance)
         colour = decontaminate(rgb, alpha, bg)
         top, bottom = body_box(alpha)
-        scale = i_height / (bottom - top)
+        if args.fit == "feet":
+            left, right = feet_span(alpha, bottom, int(depth * (bottom - top) / i_height))
+            scale = (i_feet[1] - i_feet[0]) / max(1.0, right - left) * args.zoom
+        else:
+            scale = i_height / (bottom - top) * args.zoom
         size = (max(1, round(rgb.shape[1] * scale)), max(1, round(rgb.shape[0] * scale)))
         colour_s, alpha_s = resize_premultiplied(colour, alpha, size)
         top_s, bottom_s = body_box(alpha_s)
-        dx = int(round(i_head - head_centre_x(alpha_s, top_s, bottom_s - top_s)))
+        if args.fit == "feet":
+            left_s, right_s = feet_span(alpha_s, bottom_s, depth)
+            dx = int(round((i_feet[0] + i_feet[1]) / 2 - (left_s + right_s) / 2))
+        else:
+            dx = int(round(i_head - head_centre_x(alpha_s, top_s, bottom_s - top_s)))
         dy = i_bottom - bottom_s
         canvas_c = np.zeros((canvas_h, canvas_w, 3), np.float32)
         canvas_a = np.zeros((canvas_h, canvas_w), np.float32)
