@@ -217,8 +217,8 @@ class Controller:
         self.companion.menuRequested.connect(self._show_menu)
         self.companion.moved.connect(self._on_moved)
 
-        self.menu = self._build_menu()
         self.icon = self._make_icon(frames)
+        self.menu = self._build_menu()
         app.setWindowIcon(self.icon)
         self.tray = None
         if QSystemTrayIcon.isSystemTrayAvailable():
@@ -463,9 +463,14 @@ class Controller:
 
         from PySide6.QtGui import QAction
 
+        from PySide6.QtGui import QColor
+
+        from .menu_style import icon, style_menu
+
+        ink = QColor(244, 238, 250, 220)
         menu = self.reminders_menu
         menu.clear()
-        add = QAction("Add reminder...", menu)
+        add = QAction(icon("plus", ink), "Add reminder...", menu)
         add.triggered.connect(self.ask_for_reminder)
         menu.addAction(add)
         menu.addSeparator()
@@ -476,8 +481,9 @@ class Controller:
             menu.addAction(empty)
         now = datetime.now()
         for reminder in upcoming:
-            sub = menu.addMenu(reminder.label(now))
-            cancel = QAction("Cancel this reminder", sub)
+            sub = menu.addMenu(icon("clock", ink), reminder.label(now))
+            style_menu(sub, self.pack.theme, data_dir() / "ui")
+            cancel = QAction(icon("eraser", ink), "Cancel this reminder", sub)
             cancel.triggered.connect(functools.partial(self._cancel_reminder, reminder.id))
             sub.addAction(cancel)
 
@@ -532,44 +538,61 @@ class Controller:
 
     # ------------------------------------------------------------------ menu
     def _build_menu(self):
-        from PySide6.QtGui import QAction, QActionGroup
+        from PySide6.QtGui import QAction, QActionGroup, QColor
         from PySide6.QtWidgets import QMenu
 
         from . import autostart
+        from .menu_style import Header, accent_of, icon, style_menu, switch_icon
         from .settings import SIZES
 
-        from PySide6.QtCore import Qt
-
-        menu = QMenu()
-        # She's always on top, so her menu must be too (or it could open behind her).
-        menu.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        theme, cache = self.pack.theme, data_dir() / "ui"
+        accent = accent_of(theme)
+        ink = QColor(244, 238, 250, 220)
+        self._accent = accent
         name = self.pack.name
 
-        def action(text, slot, checkable=False, checked=False, parent=menu):
+        menu = QMenu()  # also always on top: she is, so her menu must not open behind her
+        style_menu(menu, theme, cache)
+
+        def submenu(parent, text, icon_name):
+            sub = parent.addMenu(icon(icon_name, ink), text)
+            style_menu(sub, theme, cache)
+            return sub
+
+        def action(text, slot, icon_name=None, parent=menu):
             act = QAction(text, parent)
-            act.setCheckable(checkable)
-            if checkable:
-                act.setChecked(checked)
-                act.toggled.connect(slot)
-            else:
-                act.triggered.connect(slot)
+            if icon_name:
+                act.setIcon(icon(icon_name, ink))
+            act.triggered.connect(slot)
             parent.addAction(act)
             return act
 
-        self.act_toggle = action(f"Hide {name}", self.toggle_visible)
-        self.act_talk = action("Talk to me", lambda: self._event(self.brain.on_talk_request))
-        self.act_chat = action(f"Chat with {name}...", self.open_chat)
-        self.act_walk = action("Take a walk", self.take_walk)
-        self.act_sleep = action("Go to sleep", self._toggle_sleep)
-        self.reminders_menu = menu.addMenu("Reminders")
+        def toggle(text, slot, checked, parent):
+            act = QAction(text, parent)
+            act.setCheckable(True)
+            act.setChecked(checked)
+            act.setIcon(switch_icon(checked, accent))
+            act.toggled.connect(lambda on: act.setIcon(switch_icon(on, accent)))
+            act.toggled.connect(slot)
+            parent.addAction(act)
+            return act
+
+        self.menu_header = Header(menu, self.icon.pixmap(96), name, accent, smooth=self.pack.meta.get("smooth", True))
+        menu.addSeparator()
+        self.act_chat = action(f"Chat with {name}...", self.open_chat, "chat")
+        self.act_talk = action("Talk to me", lambda: self._event(self.brain.on_talk_request), "sparkle")
+        self.act_walk = action("Take a walk", self.take_walk, "walk")
+        self.act_sleep = action("Go to sleep", self._toggle_sleep, "moon")
+        self.reminders_menu = submenu(menu, "Reminders", "bell")
         self._fill_reminders_menu()
         menu.addSeparator()
 
-        self.character_menu = menu.addMenu("Character")
+        self.character_menu = submenu(menu, "Character", "person")
         self._fill_character_menu()
-        size_menu = menu.addMenu("Size")
+        size_menu = submenu(menu, "Size", "size")
         group = QActionGroup(size_menu)
         group.setExclusive(True)
+        self._size_actions = {}
         for key in SIZES:
             act = QAction(key.title(), size_menu)
             act.setCheckable(True)
@@ -577,25 +600,49 @@ class Controller:
             act.triggered.connect(functools.partial(self._set_size, key))
             group.addAction(act)
             size_menu.addAction(act)
+            self._size_actions[key] = act
+        self._mark_choices(self._size_actions.values())
 
-        self.act_top = action("Always on top", self._set_on_top, True, self.settings["always_on_top"])
-        self.act_chatty = action("Chit-chat now and then", self._set_chatty, True, self.settings["chatty"])
-        self.act_gravity = action("Gravity (falls to the taskbar)", self._set_gravity, True, self.settings["gravity"])
-        self.act_wander = action("Wander around", self._set_wander, True, self.settings["wander"])
-        self.act_care = action("Care reminders (water && breaks)", self._set_reminders, True,
-                               self.settings["reminders"])
+        settings = self.settings_menu = submenu(menu, "Settings", "settings")
+        self.act_top = toggle("Always on top", self._set_on_top, self.settings["always_on_top"], settings)
+        self.act_chatty = toggle("Chit-chat now and then", self._set_chatty, self.settings["chatty"], settings)
+        self.act_gravity = toggle("Gravity (falls to the taskbar)", self._set_gravity, self.settings["gravity"],
+                                  settings)
+        self.act_wander = toggle("Wander around", self._set_wander, self.settings["wander"], settings)
+        self.act_care = toggle("Care reminders (water, breaks, bedtime)", self._set_reminders,
+                               self.settings["reminders"], settings)
         self.act_autostart = None
         if autostart.supported():
-            self.act_autostart = action("Start with Windows", self._set_autostart, True, autostart.is_enabled())
+            self.act_autostart = toggle("Start with Windows", self._set_autostart, autostart.is_enabled(), settings)
+        settings.addSeparator()
+        action("Chat settings...", self.open_chat_settings, "key", settings)
+        action("Forget today's chat", self._forget_chat, "eraser", settings)
+        action("Move back to the corner", self.companion.reset_position, "corner", settings)
+        action("Open settings && logs folder", self._open_data_folder, "folder", settings)
         menu.addSeparator()
-        action("Move back to the corner", self.companion.reset_position)
-        action("Chat settings...", self.open_chat_settings)
-        action("Forget today's chat", self._forget_chat)
-        action("Open settings && logs folder", self._open_data_folder)
-        menu.addSeparator()
-        action("Quit DeskMate", self.quit)
+
+        self.act_toggle = action(f"Hide {name}", self.toggle_visible, "eye-off")
+        action("Quit DeskMate", self.quit, "power")
         menu.aboutToShow.connect(self._refresh_menu)
         return menu
+
+    def _mark_choices(self, actions) -> None:
+        """A small dot in front of the chosen option (radio-style submenus)."""
+        from PySide6.QtGui import QIcon
+
+        from .menu_style import icon
+
+        blank = QIcon()
+        for act in actions:
+            act.setIcon(icon("dot", self._accent) if act.isChecked() else blank)
+
+    def _rebuild_menu(self) -> None:
+        """New character, new colours: build the menu again (after the old one has closed)."""
+        old = self.menu
+        self.menu = self._build_menu()
+        if self.tray is not None:
+            self.tray.setContextMenu(self.menu)
+        old.deleteLater()
 
     def _fill_character_menu(self) -> None:
         """List every character folder (re-read each time, so new ones show up without a restart)."""
@@ -616,6 +663,7 @@ class Controller:
             act.triggered.connect(functools.partial(self.switch_character, folder))
             group.addAction(act)
             self.character_menu.addAction(act)
+        self._mark_choices(self.character_menu.actions())
         self.character_menu.setEnabled(bool(self.character_menu.actions()))
 
     def switch_character(self, folder, _checked: bool = True) -> None:
@@ -642,6 +690,9 @@ class Controller:
         self.app.setWindowIcon(self.icon)
         if self.tray is not None:
             self.tray.setIcon(self.icon)
+        from PySide6.QtCore import QTimer
+
+        QTimer.singleShot(0, self._rebuild_menu)
         self._set("character", pack.id)
         self.chat = self._make_chat()
         if self._chat_box is not None:
@@ -655,12 +706,29 @@ class Controller:
 
         self._fill_character_menu()
         self._fill_reminders_menu()
-        self.act_toggle.setText(f"Hide {self.pack.name}" if self.companion.isVisible() else f"Show {self.pack.name}")
+        from PySide6.QtGui import QColor
+
+        from .menu_style import icon
+
+        ink = QColor(244, 238, 250, 220)
+        visible = self.companion.isVisible()
+        self.act_toggle.setText(f"Hide {self.pack.name}" if visible else f"Show {self.pack.name}")
+        self.act_toggle.setIcon(icon("eye-off" if visible else "eye", ink))
         self.act_chat.setText(f"Chat with {self.pack.name}...")
         self.act_sleep.setText("Wake up" if self.brain.asleep else "Go to sleep")
+        self.act_sleep.setIcon(icon("sun" if self.brain.asleep else "moon", ink))
+        count = len(self.reminders.upcoming())
+        status = self.brain.label(time.monotonic()) if visible else "hiding"
+        if count:
+            status += f"  ·  {count} reminder{'s' if count > 1 else ''}"
+        self.menu_header.set_text(self.pack.name, status)
+        self._mark_choices(self._size_actions.values())
         if self.act_autostart is not None:
+            from .menu_style import switch_icon
+
             self.act_autostart.blockSignals(True)
             self.act_autostart.setChecked(autostart.is_enabled())
+            self.act_autostart.setIcon(switch_icon(self.act_autostart.isChecked(), self._accent))
             self.act_autostart.blockSignals(False)
 
     def _show_menu(self, global_pos) -> None:
@@ -765,7 +833,8 @@ class Controller:
         if face.isNull() or face.width() < 4:
             face = image
         icon = QIcon()
+        how = (Qt.TransformationMode.SmoothTransformation if self.pack.meta.get("smooth", True)
+               else Qt.TransformationMode.FastTransformation)  # pixel art: keep the pixels sharp
         for size in (16, 20, 24, 32, 48, 64, 128, 256):
-            icon.addPixmap(QPixmap.fromImage(face.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
-                                                         Qt.TransformationMode.SmoothTransformation)))
+            icon.addPixmap(QPixmap.fromImage(face.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, how)))
         return icon

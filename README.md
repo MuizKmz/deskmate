@@ -86,9 +86,11 @@ python -m venv .venv
 | **Right-click** her (or the tray icon) | The menu ⬇️ |
 | Click the **tray icon** | Hide / show her |
 
-**Menu:** Chat with Yuki · Talk to me · Take a walk · Go to sleep / Wake up · Reminders · Character · Size (small / medium / large) · Always on top · Gravity · Wander around · Chit-chat now and then · Care reminders · Start with Windows · Move back to the corner · Chat settings · Forget today's chat · Open settings & logs folder · Quit
+**Menu:** a glass card in her colours, with her face and mood at the top. Chat with Yuki · Talk to me · Take a walk · Go to sleep / Wake up · Reminders · Character · Size · **Settings** › (switches for Always on top, Chit-chat, Gravity, Wander around, Care reminders, Start with Windows · Chat settings · Forget today's chat · Move back to the corner · Open settings & logs folder) · Hide · Quit
 
-> Want her to stay exactly where you put her (say, mid-screen)? Untick **Gravity**.
+<img src="docs/menu.png" alt="Her right-click menu: a dark glass card with her avatar, mood, icons and switches" width="520">
+
+> Want her to stay exactly where you put her (say, mid-screen)? Settings › switch off **Gravity**.
 
 ---
 
@@ -108,7 +110,7 @@ The first time, the **Chat settings** box opens. Pick her "chat brain":
 | Setup | Paste an [API key](https://platform.openai.com/api-keys) | Install [Ollama](https://ollama.com), run `ollama pull llama3.2` |
 
 - Leave **Model** empty or click **Pick for me**: DeskMate asks which models your key can use and picks a cheap "mini" one.
-- She remembers what you talked about **today** (even after a restart), and starts fresh tomorrow. Right-click → **Forget today's chat** to clear it.
+- She remembers what you talked about **today** (even after a restart), and starts fresh tomorrow. Right-click → Settings › **Forget today's chat** to clear it.
 - While you chat, she doesn't interrupt with reminders or wander off.
 - No key, no internet, out of credit? She tells you in her own words, and everything else keeps working.
 
@@ -199,11 +201,11 @@ characters/
 | Problem | Fix |
 |---|---|
 | Nothing appears | Run `run_deskmate.bat --console` and read the message. |
-| She's lost somewhere | Right-click the tray icon → **Move back to the corner**. |
-| She won't stay where I put her | Untick **Gravity** (and **Wander around** if she walks off). |
-| Weird behaviour | Right-click → **Open settings & logs folder** → `deskmate.log`. |
+| She's lost somewhere | Right-click the tray icon → Settings › **Move back to the corner**. |
+| She won't stay where I put her | Settings › switch off **Gravity** (and **Wander around** if she walks off). |
+| Weird behaviour | Right-click → Settings › **Open settings & logs folder** → `deskmate.log`. |
 | Start fresh | Quit her, delete `settings.json` in that folder. |
-| Chat says the key doesn't work | Right-click → **Chat settings** → paste the key again → **Test connection**. |
+| Chat says the key doesn't work | Right-click → Settings › **Chat settings** → paste the key again → **Test connection**. |
 
 Settings and logs live in `%APPDATA%\DeskMate`.
 
@@ -219,6 +221,7 @@ deskmate/
 ├── bubble.py           speech bubble with typing effect
 ├── chat.py             talking to OpenAI / Ollama (pure Python, tested with a fake server)
 ├── chatbox.py          the chat box and the Chat settings dialog
+├── menu_style.py       her glass right-click menu (icons and switches drawn in code)
 ├── character.py        loads + checks character packs
 ├── settings.py         settings with safe saves
 ├── single_instance.py  only one DeskMate at a time
