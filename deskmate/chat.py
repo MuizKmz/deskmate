@@ -250,12 +250,13 @@ class ChatSession:
             self._day = self.today()
             self.history = []
         system = self.persona + ("\n" + context if context else "")
-        return [{"role": "system", "content": system}, *self.history[-HISTORY_TURNS:],
-                {"role": "user", "content": user_text}]
+        recent = [{"role": m["role"], "content": m["content"]} for m in self.history[-HISTORY_TURNS:]]
+        return [{"role": "system", "content": system}, *recent, {"role": "user", "content": user_text}]
 
     def ask(self, user_text: str, context: str = "") -> tuple[str, str]:
         """Blocking call (run it on a thread). Returns (mood, reply) or raises ChatError."""
         user_text = user_text.strip()[:1000]
+        asked_at = datetime.now().strftime("%H:%M")
         config = self.config
         if not config.model:
             config.model = pick_model(list_models(config), config.provider)
@@ -271,10 +272,26 @@ class ChatSession:
         raw, self.last_reminders = extract_reminders(raw)
         mood, reply = parse_reply(raw)
         noted = "".join(f' <remind when="{when}">{what}</remind>' for when, what in self.last_reminders)
-        self.history += [{"role": "user", "content": user_text},
-                         {"role": "assistant", "content": f"[{mood}] {reply}{noted}"}]
+        sent_at, replied_at = asked_at, datetime.now().strftime("%H:%M")
+        self.history += [{"role": "user", "content": user_text, "time": sent_at},
+                         {"role": "assistant", "content": f"[{mood}] {reply}{noted}", "time": replied_at}]
         self._save()
         return mood, reply
+
+    def transcript(self) -> list[dict]:
+        """Today's chat for the chat log window: who, clean text, time, and any reminders she set."""
+        if self.today() != self._day:
+            return []
+        lines = []
+        for message in self.history:
+            if message["role"] == "user":
+                lines.append({"role": "user", "text": message["content"], "time": message.get("time", "")})
+            else:
+                raw, reminders = extract_reminders(message["content"])
+                mood, text = parse_reply(raw)
+                lines.append({"role": "assistant", "text": text, "mood": mood, "time": message.get("time", ""),
+                              "reminders": reminders})
+        return lines
 
     def forget(self) -> None:
         self.history = []

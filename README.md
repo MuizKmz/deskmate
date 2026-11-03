@@ -60,7 +60,7 @@ Double-click **`run_deskmate.bat`**. The first time, it sets itself up (about 1�
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 85 self-tests
+run_deskmate.bat --test        # run the 86 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -86,7 +86,7 @@ python -m venv .venv
 | **Right-click** her (or the tray icon) | The menu ⬇️ |
 | Click the **tray icon** | Hide / show her |
 
-**Menu:** a glass card in her colours, with her face and mood at the top. Chat with Yuki · Talk to me · Take a walk · Go to sleep / Wake up · Reminders · Character · Size · **Settings** › (switches for Always on top, Chit-chat, Gravity, Wander around, Care reminders, Start with Windows · Chat settings · Forget today's chat · Move back to the corner · Open settings & logs folder) · Hide · Quit
+**Menu:** a glass card in her colours, with her face and mood at the top. Chat with Yuki · Today's chat · Talk to me · Take a walk · Go to sleep / Wake up · Reminders · Character · Size · **Settings** › (switches for Always on top, Chit-chat, Gravity, Wander around, Care reminders, Start with Windows · Chat settings · Forget today's chat · Move back to the corner · Open settings & logs folder) · Hide · Quit
 
 <img src="docs/menu.png" alt="Her right-click menu: a dark glass card with her avatar, mood, icons and switches" width="520">
 
@@ -110,6 +110,7 @@ The first time, the **Chat settings** box opens. Pick her "chat brain":
 | Setup | Paste an [API key](https://platform.openai.com/api-keys) | Install [Ollama](https://ollama.com), run `ollama pull llama3.2` |
 
 - Leave **Model** empty or click **Pick for me**: DeskMate asks which models your key can use and picks a cheap "mini" one.
+- **Today's chat** (in her menu, or the 🕘 button on the chat box) opens a window with the whole conversation as bubbles, with times and any reminders she set. Keep chatting there if you like.
 - She remembers what you talked about **today** (even after a restart), and starts fresh tomorrow. Right-click → Settings › **Forget today's chat** to clear it.
 - While you chat, she doesn't interrupt with reminders or wander off.
 - No key, no internet, out of credit? She tells you in her own words, and everything else keeps working.
@@ -220,7 +221,7 @@ deskmate/
 ├── brain.py            moods and what to say (pure Python, fully tested)
 ├── bubble.py           speech bubble with typing effect
 ├── chat.py             talking to OpenAI / Ollama (pure Python, tested with a fake server)
-├── chatbox.py          the chat box and the Chat settings dialog
+├── chatbox.py          the chat box, the Today's chat window and the Chat settings dialog
 ├── menu_style.py       her glass right-click menu (icons and switches drawn in code)
 ├── character.py        loads + checks character packs
 ├── settings.py         settings with safe saves
@@ -234,7 +235,7 @@ tools/make_blink.py          makes a blink picture from idle + sleep
 tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
-tests/                       85 tests (python -m unittest)
+tests/                       86 tests (python -m unittest)
 packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno Setup)
 .github/workflows/           tests on every push; a tagged push builds and publishes a release
 ```

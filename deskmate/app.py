@@ -203,6 +203,7 @@ class Controller:
         self._tooltip = ""
         self._walk_after_landing = False
         self._chat_box = None
+        self._chat_log = None
         self._chat_worker = None
         self.chat = self._make_chat()
         from .reminders import ReminderBook
@@ -345,11 +346,17 @@ class Controller:
         if self.chat.config.needs_key and not self.chat.config.api_key:
             if not self.open_chat_settings():
                 return
+        if self._chat_log is not None and self._chat_log.isVisible():
+            self._chat_log.raise_()
+            self._chat_log.activateWindow()
+            self._chat_log.edit.setFocus()
+            return
         if not self.companion.isVisible():
             self.show_companion()
         if self._chat_box is None:
             self._chat_box = ChatBox(self.pack.name, self.pack.theme)
             self._chat_box.sent.connect(self._on_chat_sent)
+            self._chat_box.history_requested.connect(self.open_chat_log)
         if self._chat_worker is None:
             self._chat_worker = Background()
         sprite = self.companion._sprite_rect_local()
@@ -365,7 +372,9 @@ class Controller:
         self.brain.on_chat_sent(now)
         self._apply(now)
         self.bubble.say("...", 60, self.companion.head_rect_global(), self.companion.available_rect())
-        self._chat_box.set_waiting(True)
+        self._set_chat_waiting(True)
+        if self._chat_log is not None:
+            self._chat_log.add_pending(text, datetime.now().strftime("%H:%M"))
         worked = (now - self.brain._active_since) / 60.0
         context = situation(datetime.now(), self.brain.label(now), worked)
         session = self.chat
@@ -374,8 +383,7 @@ class Controller:
     def _on_chat_reply(self, ok: bool, value) -> None:
         from .chat import OFFLINE_LINES, ChatError
 
-        if self._chat_box is not None:
-            self._chat_box.set_waiting(False)
+        self._set_chat_waiting(False)
         now = time.monotonic()
         if ok:
             mood, reply = value
@@ -387,6 +395,11 @@ class Controller:
             kind = value.kind if isinstance(value, ChatError) else "server"
             log.warning("Chat failed (%s): %s", kind, getattr(value, "detail", value))
             mood, reply = ("pouty" if kind in ("no_key", "auth", "quota") else "sleepy"), OFFLINE_LINES[kind]
+        if self._chat_log is not None:
+            if ok:
+                self._chat_log.set_lines(self.chat.transcript())
+            else:  # keep your unanswered message on screen, with her explanation under it
+                self._chat_log.add_note(reply)
         self.bubble.dismiss()
         self.brain.on_chat_reply(now, mood, reply)
         self._apply(now)
@@ -487,6 +500,37 @@ class Controller:
             cancel.triggered.connect(functools.partial(self._cancel_reminder, reminder.id))
             sub.addAction(cancel)
 
+    def _set_chat_waiting(self, waiting: bool) -> None:
+        for window in (self._chat_box, self._chat_log):
+            if window is not None:
+                window.set_waiting(waiting)
+
+    def open_chat_log(self) -> None:
+        """Menu: today's chat, to scroll back through (and keep chatting in)."""
+        from PySide6.QtCore import QRect
+
+        from .chatbox import Background, ChatLogWindow
+
+        if self._chat_log is None:
+            self._chat_log = ChatLogWindow(self.pack.name, self.pack.theme, self.icon.pixmap(96),
+                                           smooth=self.pack.meta.get("smooth", True))
+            self._chat_log.sent.connect(self._on_chat_log_sent)
+        if self._chat_worker is None:
+            self._chat_worker = Background()
+        if not self.companion.isVisible():
+            self.show_companion()
+        self._chat_log.set_lines(self.chat.transcript())
+        if self._chat_box is not None:
+            self._chat_box.hide()  # one chat window at a time
+        sprite = self.companion._sprite_rect_local()
+        body = QRect(self.companion.mapToGlobal(sprite.topLeft()), sprite.size())
+        self._chat_log.open_near(body, self.companion.available_rect())
+
+    def _on_chat_log_sent(self, text: str) -> None:
+        if self.chat.config.needs_key and not self.chat.config.api_key and not self.open_chat_settings():
+            return
+        self._on_chat_sent(text)
+
     def open_chat_settings(self) -> bool:
         """Menu: the Chat settings dialog. Returns True if saved."""
         from .chat import load_key, save_key
@@ -514,6 +558,8 @@ class Controller:
 
     def _forget_chat(self) -> None:
         self.chat.forget()
+        if self._chat_log is not None:
+            self._chat_log.set_lines([])
         self._event(lambda now: self.brain.on_chat_reply(now, "surprised", "Huh? What were we talking about?"))
 
     def _on_moved(self) -> None:
@@ -580,6 +626,7 @@ class Controller:
         self.menu_header = Header(menu, self.icon.pixmap(96), name, accent, smooth=self.pack.meta.get("smooth", True))
         menu.addSeparator()
         self.act_chat = action(f"Chat with {name}...", self.open_chat, "chat")
+        self.act_chat_log = action("Today's chat", self.open_chat_log, "clock")
         self.act_talk = action("Talk to me", lambda: self._event(self.brain.on_talk_request), "sparkle")
         self.act_walk = action("Take a walk", self.take_walk, "walk")
         self.act_sleep = action("Go to sleep", self._toggle_sleep, "moon")
@@ -695,10 +742,12 @@ class Controller:
         QTimer.singleShot(0, self._rebuild_menu)
         self._set("character", pack.id)
         self.chat = self._make_chat()
-        if self._chat_box is not None:
-            self._chat_box.hide()
-            self._chat_box.deleteLater()
-            self._chat_box = None
+        for attr in ("_chat_box", "_chat_log"):
+            window = getattr(self, attr)
+            if window is not None:
+                window.hide()
+                window.deleteLater()
+                setattr(self, attr, None)
         self._event(self.brain.on_start)
 
     def _refresh_menu(self) -> None:
@@ -814,8 +863,9 @@ class Controller:
         self._save_timer.stop()
         self.settings.save()
         self.bubble.dismiss()
-        if self._chat_box is not None:
-            self._chat_box.hide()
+        for window in (self._chat_box, self._chat_log):
+            if window is not None:
+                window.hide()
         if self.tray is not None:
             self.tray.hide()
 

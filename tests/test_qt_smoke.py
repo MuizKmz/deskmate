@@ -356,6 +356,70 @@ class QtSmokeTests(unittest.TestCase):
             controller._on_about_to_quit()
             controller.companion.close()
 
+    def test_chat_log_window(self):
+        import random
+        from unittest import mock
+
+        from deskmate.app import Controller
+        from deskmate.brain import Brain
+        from deskmate.character import load_pack
+        from deskmate.companion import load_frames
+        from deskmate.settings import Settings
+        from tests.fake_openai import FakeOpenAI
+
+        fake = FakeOpenAI()
+        self.addCleanup(fake.close)
+        with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
+            settings = Settings(Path(home) / "settings.json")
+            pack = load_pack(self.root)
+            brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5), wallclock=noon)
+            controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
+            controller.start()
+            controller.chat.config.api_key = fake.key
+            controller.chat.config.base_url = fake.url
+            controller.chat.config.model = "gpt-5.4-mini"
+
+            controller.act_chat_log.trigger()
+            log = controller._chat_log
+            self.assertTrue(log.isVisible())
+            self.assertEqual(log.bubble_texts(), [])  # nothing yet today
+
+            fake.reply = '[happy] Hi hi~ I\'ll remind you! <remind when="in 30 min">stretch</remind>'
+            log.edit.setText("hello! remind me to stretch in 30 min")
+            log.edit.returnPressed.emit()
+            self.assertEqual(log.bubble_texts()[-2:], [("user", "hello! remind me to stretch in 30 min"),
+                                                       ("assistant", "...")])  # sent + typing
+            deadline = time.monotonic() + 10
+            while log._waiting and time.monotonic() < deadline:
+                spin(0.05)
+            self.assertEqual(log.bubble_texts(), [("user", "hello! remind me to stretch in 30 min"),
+                                                  ("assistant", "Hi hi~ I'll remind you!")])
+            self.assertEqual([r.text for r in controller.reminders.upcoming()], ["stretch"])
+
+            # "Chat with..." while the log is open just brings the log forward.
+            controller.open_chat()
+            self.assertTrue(controller._chat_box is None or not controller._chat_box.isVisible())
+
+            # A failure shows as a faded note but isn't saved to the chat.
+            controller.chat.config.api_key = "sk-wrong-key-000"
+            log.edit.setText("are you there?")
+            log.edit.returnPressed.emit()
+            deadline = time.monotonic() + 10
+            while log._waiting and time.monotonic() < deadline:
+                spin(0.05)
+            self.assertIn("key", log.bubble_texts()[-1][1])
+            self.assertEqual(len(controller.chat.transcript()), 2)
+
+            # Reopening reads today's chat back; forgetting clears the window too.
+            log.hide()
+            controller.open_chat_log()
+            self.assertEqual(len(log.bubble_texts()), 2)
+            controller._forget_chat()
+            self.assertEqual(log.bubble_texts(), [])
+            log.hide()
+            controller._on_about_to_quit()
+            controller.companion.close()
+
     def test_reminders_from_the_menu_from_chat_and_missed_ones(self):
         import json
         import random
