@@ -15,8 +15,9 @@ WHATS_NEW = {
         ("👀", "Watch with me (buddy mode)", "She notices what you open, hears your music, and reacts like a friend. "
                                             "Only when you allow it."),
         ("💭", "She remembers you", "Your birthday, your projects, your songs, and a little diary of your days."),
-        ("🔊", "More voices", "Any Windows voice, or free natural voices (like Kokoro) from your own PC. A Japanese "
-                             "voice can even say her lines in Japanese."),
+        ("🔊", "More voices", "Any Windows voice, or a free natural voice pack that runs on this PC (no setup). A "
+                             "Japanese voice can even say her lines in Japanese."),
+        ("👄", "She moves her mouth", "Her lips move in time with her voice while she talks."),
         ("⚙️", "A Settings window", "Everything in one place (right-click › Settings)."),
     ],
 }
@@ -156,7 +157,7 @@ class SetupWizard(GlassWindow):
             ("off", "Quiet", "Text only."),
             ("windows", "Windows voice", "Free and offline, a little robotic."),
             ("openai", "Natural voice (OpenAI)", "Sounds real. Uses your OpenAI key."),
-            ("local", "Natural voice (my own server)", "Free and offline with Kokoro on this PC."),
+            ("builtin", "Natural voice (free voice pack)", "Free and offline. A one-time download (~170 MB)."),
         ], self._choose_voice)
         column.addWidget(self.voice_choices)
         self.voice_status = self._status(column)
@@ -203,7 +204,8 @@ class SetupWizard(GlassWindow):
         ready = (not c.chat.config.needs_key) or bool(c.chat.config.api_key)
         brain = {"openai": "OpenAI", "claude": "Claude", "ollama": "Ollama"}.get(s["chat_provider"], "")
         self.chat_status.setText(f"✓ Ready: {brain}" if ready and brain else "")
-        voice = "local" if s["voice"] == "openai" and s["tts_source"] == "local" else s["voice"]
+        own = s["voice"] == "openai" and s["tts_source"] in ("builtin", "local")
+        voice = "builtin" if own else s["voice"]  # (your own server counts too: it's set up in voice settings)
         self.voice_choices.choose(voice)
         self.voice_test.setEnabled(s["voice"] != "off")
         self.buddy_status.setText("✓ She's watching with you." if c.watch is not None else "")
@@ -217,10 +219,19 @@ class SetupWizard(GlassWindow):
         self._refresh()
 
     def _choose_voice(self, choice: str) -> None:
-        if choice == "local":
-            self.c._set("tts_source", "local")
-            self.c._set_voice("openai")
-            self.c.open_voice_settings()
+        if choice == "builtin":
+            from .voice import OPENAI_VOICES, OWN_SERVER_VOICE
+
+            self.c._set("tts_source", "builtin")
+            if self.c.settings["openai_voice"] in OPENAI_VOICES:
+                self.c._set("openai_voice", OWN_SERVER_VOICE)  # OpenAI's names mean nothing to the pack
+            self.c.speaker = self.c._make_speaker()
+            if self.c.voice_pack().installed:
+                self.c._set_voice("openai")
+            else:
+                self.c._set("voice", "openai")
+                self.c.speaker.mode = "openai"
+                self.c.open_voice_settings()  # where the Download button is
         else:
             if choice == "openai":
                 self.c._set("tts_source", "openai")

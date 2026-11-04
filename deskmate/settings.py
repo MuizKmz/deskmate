@@ -57,7 +57,7 @@ SCHEMA: dict[str, tuple[Any, Callable[[Any], bool]]] = {
     "windows_voice": ("", lambda v: isinstance(v, str) and len(v) < 120),  # "" = the first female voice
     "windows_voice_lang": ("", lambda v: isinstance(v, str) and len(v) < 20),  # its culture, e.g. "ja-JP"
     "voice_translate": (True, _is_bool),  # a Japanese voice says her lines in Japanese (text stays English)
-    "tts_source": ("openai", lambda v: v in ("openai", "local")),  # Natural voice: OpenAI, or your own server
+    "tts_source": ("openai", lambda v: v in ("openai", "builtin", "local")),  # OpenAI, the voice pack, or your server
     "tts_url": ("http://localhost:8880/v1", lambda v: isinstance(v, str) and v.startswith(("http://", "https://"))),
     "tts_model": ("", lambda v: isinstance(v, str) and len(v) < 120),
     "update_check": (True, _is_bool),

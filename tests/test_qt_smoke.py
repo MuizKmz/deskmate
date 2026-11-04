@@ -351,6 +351,33 @@ class QtSmokeTests(unittest.TestCase):
         self.assertEqual(companion.pos().y(), companion.floor_y())
         companion.close()
 
+    def test_her_mouth_moves_while_she_talks(self):
+        from deskmate.voice import Mouth
+
+        companion, clock = self.physics_companion()
+        talk = companion._frames["talk"][0]
+        closed = companion._frames["happy"][0].copy()  # any different picture will do as "mouth closed"
+        companion._frames["talk"] = [talk, closed]
+        companion.set_expression("idle")
+        companion._prev = None
+        self.assertEqual(companion.expression, "idle")
+        companion.set_mouth(Mouth(envelope=[1.0, 1.0, 0.0, 1.0], step=0.1, clock=clock))
+        self.assertEqual(companion.expression, "talk")  # talking: the talk frames...
+        self.assertEqual(companion._frame_index("talk", clock.t + 0.05), 0)   # ...mouth open
+        self.assertEqual(companion._frame_index("talk", clock.t + 0.25), 1)   # ...mouth closed in the pause
+        self.assertEqual(companion._frame_index("talk", clock.t + 0.35), 0)
+        clock.t += 0.5
+        companion._on_frame()
+        self.assertIsNone(companion._mouth)  # the line is over
+        self.assertEqual(companion.expression, "idle")
+        companion.set_expression("blush")  # a mood face stays while she talks
+        companion.set_mouth(Mouth(until=clock.t + 1, clock=clock))
+        self.assertEqual(companion.expression, "blush")
+        companion.set_mouth(None)
+        companion.set_expression("talk")
+        self.assertEqual(companion._frame_index("talk", clock.t), 1)  # not talking: mouth closed, not flapping
+        companion.close()
+
     def test_blinking(self):
         companion, clock = self.physics_companion(with_blink=True)
         companion.set_expression("idle")
@@ -654,7 +681,7 @@ class QtSmokeTests(unittest.TestCase):
                 spin(0.05)
             self.assertEqual(played, [FakeOpenAI.WAV])
             self.assertEqual((fake.requests[-1]["voice"], fake.requests[-1]["model"]), ("jf_alpha", "kokoro"))
-            self.assertEqual(fake.requests[-1]["input"], "こんにちは、私の声はどうですか？")  # a Japanese voice: a Japanese line
+            self.assertEqual(fake.requests[-1]["input"], "こんにちは、わたしの こえは どうですか？")  # a Japanese voice: a Japanese line
             self.assertIn("Japanese voice", dialog.language.text())
             dialog.voice.setEditText("af_bella")
             self.assertEqual(dialog.language.text(), "American English voice")
@@ -1096,6 +1123,151 @@ class QtSmokeTests(unittest.TestCase):
             window.hide()
             log.hide()
             controller._on_about_to_quit()
+            controller.companion.close()
+
+    def test_built_in_voice_pack(self):
+        import random
+        from unittest import mock
+
+        from PySide6.QtWidgets import QDialog
+
+        from deskmate.app import Controller
+        from deskmate.brain import Brain
+        from deskmate.character import load_pack
+        from deskmate.chatbox import VoiceSettingsDialog
+        from deskmate.companion import load_frames
+        from deskmate.settings import Settings
+        from deskmate.voice import PackVoice
+        from deskmate.voicepack import VoicePackError
+        from tests.fake_openai import FakeOpenAI
+
+        fake = FakeOpenAI()  # plays the part of the running pack
+        self.addCleanup(fake.close)
+        fake.require_key = False
+        fake.MODELS = ["kokoro"]
+
+        class Pack:  # a pretend voice pack: "downloaded" once download() has run
+            def __init__(self):
+                self.folder = Path(tempfile.mkdtemp())
+                self.installed = False
+                self.stopped = 0
+
+            def ensure_running(self, timeout=None):
+                if not self.installed:
+                    raise VoicePackError("missing", "The voice pack isn't downloaded yet (Voice settings).")
+                return fake.url
+
+            def stop(self):
+                self.stopped += 1
+
+        def wait(condition, seconds=5):
+            deadline = time.monotonic() + seconds
+            while not condition() and time.monotonic() < deadline:
+                spin(0.05)
+
+        with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
+            settings = Settings(Path(home) / "settings.json")
+            settings["perch"] = False  # never sit on the test machine's real windows
+            settings["update_check"] = False  # no real GitHub calls in tests
+            pack_folder = load_pack(self.root)
+            brain = Brain(pack_folder.lines, now=time.monotonic(), rng=random.Random(5), wallclock=noon)
+            controller = Controller(self.app, settings, pack_folder, load_frames(pack_folder), brain, ActiveUser())
+            controller.start()
+            pack = Pack()
+            controller._voice_pack = pack
+
+            # Setup: "Natural voice (free voice pack)" opens Voice settings, where the Download button is.
+            controller.start_setup()
+            setup = controller._setup
+            setup.go(setup.STEPS.index("voice"))
+            with mock.patch.object(VoiceSettingsDialog, "exec", return_value=QDialog.DialogCode.Rejected) as shown:
+                setup.voice_choices.buttons["builtin"].click()
+            shown.assert_called_once()
+            self.assertEqual((settings["voice"], settings["tts_source"]), ("openai", "builtin"))
+            self.assertIsInstance(controller.speaker.openai, PackVoice)
+            self.assertTrue(controller.speaker.openai.own_server)  # no OpenAI key needed
+            self.assertTrue(setup.voice_choices.buttons["builtin"].isChecked())
+            setup.close()
+            controller.open_settings("voice")
+            self.assertIn("built-in voice pack (not downloaded yet)", controller._settings_window.voice_info.text())
+            controller._settings_window.close()
+
+            # Not downloaded yet: she still talks, with the Windows voice.
+            windows = mock.MagicMock()
+            windows.available.return_value = True
+            controller.speaker.windows = windows
+            controller.speaker.say("Hi there~", "chat")
+            wait(lambda: windows.speak.called)
+            windows.speak.assert_called_with("Hi there")
+
+            # Japanese: her brain is asked for kana only (the pack can't read kanji).
+            settings["openai_voice"] = "jf_alpha"
+            settings["voice_translate"] = True
+            self.assertIn("no kanji", controller._voice_context())
+            settings["tts_source"] = "local"  # (your own Kokoro server reads kanji fine)
+            self.assertNotIn("kanji", controller._voice_context())
+            settings["tts_source"] = "builtin"
+
+            # Voice settings: Download (with progress), then Load voices and Test like any voice server.
+            def download(folder, progress, stop):
+                self.assertEqual(folder, pack.folder)
+                progress(40 * 1048576, 160 * 1048576)
+                progress(160 * 1048576, 160 * 1048576)
+                pack.installed = True
+
+            played = []
+            dialog = VoiceSettingsDialog(settings, "", "Testy", list_windows=lambda: [], make_windows=mock.MagicMock,
+                                         play=played.append, voice_pack=pack, download=download)
+            self.assertEqual(dialog.chosen_source, "builtin")
+            self.assertTrue(dialog.form.isRowVisible(dialog.pack_box))
+            self.assertFalse(dialog.form.isRowVisible(dialog.url))  # nothing to type in
+            self.assertIn("Not downloaded", dialog.pack_status.text())
+            self.assertFalse(dialog.test_natural.isEnabled())  # nothing to test yet
+            stops = pack.stopped
+            dialog.pack_download.click()
+            wait(lambda: dialog.pack_download.isEnabled())
+            self.assertGreater(pack.stopped, stops)  # (an old pack is stopped before it's replaced)
+            self.assertIn("✓", dialog.status.text())
+            self.assertIn("Downloaded", dialog.pack_status.text())
+            self.assertEqual(dialog.pack_progress.value(), 1000)
+            self.assertTrue(dialog.test_natural.isEnabled())
+            dialog.load.click()
+            wait(lambda: dialog.load.isEnabled() and dialog.voice.count() >= 3)
+            self.assertEqual([dialog.voice.itemText(i) for i in range(dialog.voice.count())],
+                             ["af_bella", "af_heart", "jf_alpha"])
+            dialog.voice.setEditText("jf_alpha")
+            dialog.test_natural.click()
+            wait(lambda: played)
+            self.assertEqual(played, [FakeOpenAI.WAV])
+            self.assertEqual(fake.requests[-1]["voice"], "jf_alpha")
+            self.assertEqual(fake.requests[-1]["input"], "こんにちは、わたしの こえは どうですか？")  # kana only
+            dialog.source.setCurrentIndex(dialog.source.findData("local"))
+            self.assertEqual(dialog.chosen_voice, "jf_alpha")  # same Kokoro voices: your pick stays
+            dialog.source.setCurrentIndex(dialog.source.findData("openai"))
+            self.assertFalse(dialog.form.isRowVisible(dialog.pack_box))
+            dialog.close()
+
+            def broken(folder, progress, stop):
+                raise VoicePackError("failed", "The download was cut off. Try again.")
+
+            dialog = VoiceSettingsDialog(settings, "", "Testy", list_windows=lambda: [], make_windows=mock.MagicMock,
+                                         voice_pack=pack, download=broken)
+            dialog.pack_download.click()
+            wait(lambda: dialog.pack_download.isEnabled())
+            self.assertEqual(dialog.status.text(), "The download was cut off. Try again.")
+            dialog.close()
+
+            # Downloaded: the speaker uses it; quitting stops it.
+            controller.speaker = controller._make_speaker()
+            controller.speaker.windows = windows
+            calls = windows.speak.call_count
+            controller.speaker.say("Hi again~", "chat")
+            wait(lambda: len(fake.requests) and fake.requests[-1].get("input") == "Hi again")
+            self.assertEqual(fake.requests[-1]["voice"], "jf_alpha")
+            self.assertEqual(windows.speak.call_count, calls)  # the pack spoke, not the Windows voice
+            stops = pack.stopped
+            controller._on_about_to_quit()
+            self.assertGreater(pack.stopped, stops)
             controller.companion.close()
 
     def test_settings_window_setup_and_whats_new(self):

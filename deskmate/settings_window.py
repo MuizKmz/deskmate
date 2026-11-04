@@ -287,7 +287,10 @@ class SettingsWindow(GlassWindow):
         self.chat_info.setText(f"Chat brain: {brain}  ·  model: {model}" +
                                ("" if ready else "\nNo key yet: open Chat settings to add one."))
 
-        if s["tts_source"] == "local":
+        if s["tts_source"] == "builtin":
+            ready = "downloaded" if c.voice_pack().installed else "not downloaded yet"
+            natural = f"built-in voice pack ({ready}), voice {s['openai_voice']}"
+        elif s["tts_source"] == "local":
             natural = f"your own server ({s['tts_url']}), voice {s['openai_voice']}"
         else:
             natural = f"OpenAI, voice {s['openai_voice']}"

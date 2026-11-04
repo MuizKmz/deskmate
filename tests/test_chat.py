@@ -311,6 +311,12 @@ class ServerTests(unittest.TestCase):
         self.fake.reply = "「お水を飲んでね～」"
         self.assertEqual(session.translate("Drink some water~", "Japanese"), "お水を飲んでね～")
         self.assertIn("Japanese", self.fake.requests[-1]["messages"][0]["content"])
+        self.assertNotIn("kanji", self.fake.requests[-1]["messages"][0]["content"])
+        session.translate("Drink some water~", "Japanese", kana_only=True)  # the voice pack reads kana only
+        self.assertIn("no kanji", self.fake.requests[-1]["messages"][0]["content"])
+        self.assertIn("no kanji", C.spoken_prompt("Japanese", kana_only=True))
+        self.assertNotIn("kanji", C.spoken_prompt("Japanese"))
+        self.assertNotIn("kanji", C.spoken_prompt("Spanish", kana_only=True))
         self.assertEqual(C.parse_reply("[happy] hi <say>cut"), ("happy", "hi cut"))
 
     def test_ollama_needs_no_key(self):

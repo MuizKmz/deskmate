@@ -33,7 +33,7 @@ dozes off when you leave, pouts when you ignore her, and reminds you to drink wa
 | 😤 **Has feelings** | Pouts if you work for ages without saying hi. One pat and she forgives you. |
 | 💧 **Takes care of you** | Gentle reminders to drink water, stretch, and go to bed when you work past 11 pm (can be switched off). |
 | ⏰ **Reminds you** | "Remind me at 3pm about the meeting": ask in chat or add one from her menu, and she tells you on time. |
-| 💬 **Talks** | Speech bubbles with a typing effect, from her own lines in `character.json`. She can also say them out loud. |
+| 💬 **Talks** | Speech bubbles with a typing effect, from her own lines in `character.json`. She can also say them out loud, and her lips move in time with her voice. |
 | 🧠 **Chats with you** | Type to her and she answers in character, powered by OpenAI, Claude or a free local model (Ollama). Remembers your day. |
 | 💭 **Remembers you** | Your birthday, your projects, your favourite songs, and a little diary of your days together. You can see and delete all of it. |
 | 👀 **Watches with you** | Only if you say yes: she notices what you open and reacts like a buddy ("Ooh, lo-fi~ study playlist?"), and you can ask her about anything on your screen. |
@@ -65,7 +65,7 @@ Double-click **`run_deskmate.bat`**. The first time, it sets itself up (about 1�
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 141 self-tests
+run_deskmate.bat --test        # run the 156 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -186,13 +186,14 @@ Right-click → **Settings...** › **Voice**:
 |---|---|
 | **Off** | Quiet (the default) |
 | **Windows voice (free)** | The speech engine built into Windows. Works offline, a little robotic |
-| **Natural voice (OpenAI)** | A soft, natural voice using your OpenAI key (a fraction of a cent per line). If it can't connect, the Windows voice takes over |
+| **Natural voice** | A soft, natural voice: the free **voice pack** (offline, one download), OpenAI (your key, a fraction of a cent per line), or your own server. If it can't speak, the Windows voice takes over |
 
 She says **everything** out loud: chat replies, greetings, reminders, her little idle lines and buddy-mode comments (the bubble still shows the text). Prefer quiet? Set **Says out loud** to **Only chat replies** on the same tab. Decorations like `~` and `*yawn*` aren't read out, and while you're in a Teams / Zoom / Meet call she only shows the text, so she never talks over your meeting.
 
 **Voice settings...** (on the same tab) lets you choose *which* voice, with a **Test** button for each:
 
 - **Windows voice:** any voice installed on Windows, by name (e.g. *Microsoft Haruka Desktop* for Japanese). Installing a language's speech pack adds some; the free [NaturalVoiceSAPIAdapter](https://github.com/gexgd0419/NaturalVoiceSAPIAdapter) makes Windows 11's natural voices show up too (it's a clever hack, so a Windows update may break it).
+- **Built-in voice pack (free, offline, no setup):** choose **Built-in voice pack** and press **Download** (about 170 MB, once). That's it: DeskMate starts the voice by itself when she speaks and stops it when she quits. No Docker, no terminal, nothing leaves your PC. It's [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (the same voices as below, `af_heart` by default, `jf_alpha` for Japanese) running as a small separate program, `DeskMate-Voice.exe`, in `%APPDATA%\DeskMate\voicepack`. Its Japanese reads kana only, so with a Japanese voice her brain writes the spoken line in hiragana/katakana.
 - **Natural voice from your own server (free, offline):** run [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) on your PC (`docker run -d --name kokoro --restart unless-stopped -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu:latest` runs it in the background and starts it again with Docker; or its `start-cpu.ps1` without Docker), choose **My own server**, keep `http://localhost:8880/v1`, click **Load voices**. Kokoro has dozens of voices, and you can mix them (`af_bella+af_sky`). The first letter is the language, the second is female/male: `af_`/`am_` American English, `bf_`/`bm_` British English, `jf_` Japanese, `zf_` Chinese, `ef_` Spanish, `ff_` French, `hf_` Hindi, `if_` Italian, `pf_` Portuguese. **Japanese (or other) voice, English chat:** with a non-English voice, she *says* her lines in that voice's language while the bubble and chat stay English ("Welcome back~" on screen, 「おかえり～」 out loud). Her chat brain writes the spoken version together with each reply (no extra cost), and translates her fixed lines (greetings, reminders…) once and remembers them. This works for Japanese Windows voices too (like *Microsoft Haruka*). Untick **Say her lines in the voice's language** in Voice settings to turn it off. No key, nothing leaves your PC. Any server that speaks OpenAI's `/audio/speech` works the same way.
 - If the Natural voice can't be reached, she falls back to the Windows voice.
 
@@ -220,7 +221,7 @@ When it's time she hops up and tells you. **Reminders** in her menu lists what's
 | `idle` | Normal, chilling with you |
 | `happy` | You patted her, or she's greeting you |
 | `blush` | Your mouse rests on her, or she just forgave you |
-| `talk` | She's saying something |
+| `talk` | She's saying something (with `talk_01` mouth open + `talk_02` mouth closed, her lips move as she speaks) |
 | `surprised` | Being carried, or just woke up |
 | `sleepy` | You've been away 5 minutes, or it's after midnight |
 | `sleep` | You've been away 15 minutes (or you put her to bed) — with floating *zzz* |
@@ -323,17 +324,20 @@ deskmate/
 ├── sysidle.py          "is the user away?" (Windows idle time)
 ├── autostart.py        Start with Windows
 ├── perch.py            the window tops she can sit on (asks Windows for the open windows)
-├── voice.py            her voice: Windows speech or OpenAI
+├── voice.py            her voice: Windows speech, OpenAI, the voice pack or your own server
+├── voicepack.py        downloads the voice pack, starts and stops it
 ├── updates.py          "a new me is out!": checks GitHub for a newer release
 └── logsetup.py         log file, even with no console
 tools/prepare_character.py   picture clean-up → character pack
 tools/draw_pixel_character.py  draws Piko in code
 tools/make_blink.py          makes a blink picture from idle + sleep
+tools/make_mouth.py          makes a mouth-closed talk picture (talk_02) from talk_01, for lip-sync
 tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
-tests/                       141 tests (python -m unittest)
-packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno Setup)
+deskmate_voice/              the voice pack's little server (Kokoro), built into DeskMate-Voice.exe
+tests/                       156 tests (python -m unittest)
+packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno Setup) + voicepack.spec
 .github/workflows/           tests on every push; a tagged push builds and publishes a release
 ```
 

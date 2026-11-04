@@ -331,9 +331,12 @@ class Controller:
                 self.bubble.say(speech.text, speech.duration,
                                 self.companion.head_rect_global(), self.companion.available_rect())
                 try:
-                    self.speaker.say(speech.text, speech.kind, speech.spoken)
+                    spoken = self.speaker.say(speech.text, speech.kind, speech.spoken)
                 except Exception:  # her voice must never break her
                     log.exception("Voice failed")
+                    spoken = False
+                if not spoken:  # no voice: her lips move while the bubble types the words
+                    self.companion.set_mouth(self._typing_mouth(speech.text))
         if self.tray is not None:
             tip = f"{self.pack.name} is {self.brain.label(now)}" + (" · watching with you" if self.watch else "")
             if tip != self._tooltip:
@@ -1269,23 +1272,37 @@ class Controller:
     def _make_speaker(self):
         from .chat import ChatConfig, load_key
         from .chatbox import Background
-        from .voice import OpenAIVoice, Speaker, WindowsVoice
+        from .voice import OpenAIVoice, PackVoice, Speaker, WindowsVoice
 
         self._voice_worker = Background()
-        if self.settings["tts_source"] == "local":  # your own server (e.g. Kokoro): no key, its own voices
-            config = ChatConfig(provider="local", base_url=self.settings["tts_url"])
-            model = ""
+        if self.settings["tts_source"] == "builtin":  # the voice pack, started when she first speaks
+            natural = PackVoice(self.voice_pack(), voice=self.settings["openai_voice"])
         else:
-            config = ChatConfig(provider="openai", api_key=load_key(data_dir() / "secrets.json"))
-            model = self.settings["tts_model"]
-        natural = OpenAIVoice(config, voice=self.settings["openai_voice"], model=model)
+            if self.settings["tts_source"] == "local":  # your own server (e.g. Kokoro): no key, its own voices
+                config = ChatConfig(provider="local", base_url=self.settings["tts_url"])
+                model = ""
+            else:
+                config = ChatConfig(provider="openai", api_key=load_key(data_dir() / "secrets.json"))
+                model = self.settings["tts_model"]
+            natural = OpenAIVoice(config, voice=self.settings["openai_voice"], model=model)
+            if getattr(self, "_voice_pack", None) is not None:
+                self._voice_pack.stop()  # not using the pack any more
         return Speaker(WindowsVoice(name=self.settings["windows_voice"]), natural, self._voice_worker.run,
                        mode=self.settings["voice"], everything=self.settings["voice_lines"] == "all",
-                       hush=self._in_a_call, language=self._spoken_language, translate=self._translate_line)
+                       hush=self._in_a_call, language=self._spoken_language, translate=self._translate_line,
+                       on_mouth=lambda mouth: self.companion.set_mouth(mouth))
+
+    def voice_pack(self):
+        """The built-in voice pack (made when first needed; it only *runs* while she uses it)."""
+        from .voicepack import VoicePack
+
+        if getattr(self, "_voice_pack", None) is None:
+            self._voice_pack = VoicePack(data_dir() / "voicepack")
+        return self._voice_pack
 
     def _natural_label(self) -> str:
-        return ("Natural voice (your own server)" if self.settings["tts_source"] == "local"
-                else "Natural voice (OpenAI)")
+        return {"local": "Natural voice (your own server)", "builtin": "Natural voice (built-in voice pack)"}.get(
+            self.settings["tts_source"], "Natural voice (OpenAI)")
 
     def _refresh_voice_key(self) -> None:
         from .chat import load_key
@@ -1298,7 +1315,8 @@ class Controller:
         from .chat import load_key
         from .chatbox import VoiceSettingsDialog
 
-        dialog = VoiceSettingsDialog(self.settings, load_key(data_dir() / "secrets.json"), self.pack.name)
+        dialog = VoiceSettingsDialog(self.settings, load_key(data_dir() / "secrets.json"), self.pack.name,
+                                     voice_pack=self.voice_pack())
         if dialog.exec() != dialog.DialogCode.Accepted:
             return False
         if dialog.chosen_source != self.settings["tts_source"] or dialog.chosen_url != self.settings["tts_url"]:
@@ -1346,7 +1364,7 @@ class Controller:
         if not self.settings["voice_translate"]:
             return ""
         mode = self.settings["voice"]
-        if mode == "openai" and self.settings["tts_source"] == "local":
+        if mode == "openai" and self.settings["tts_source"] in ("local", "builtin"):
             language = voice_language(self.settings["openai_voice"])
         elif mode == "windows":
             language = culture_language(self.settings["windows_voice_lang"])
@@ -1366,11 +1384,12 @@ class Controller:
                 self._translations = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
             except (OSError, ValueError):
                 self._translations = {}
-        key = f"{language}|{text}"
+        kana = self._kana_only()
+        key = f"{language}{' (kana)' if kana else ''}|{text}"
         with self._translations_lock:
             if key in self._translations:
                 return self._translations[key]
-        line = self.chat.translate(text, language)
+        line = self.chat.translate(text, language, kana)
         if line:
             with self._translations_lock:
                 self._translations[key] = line
@@ -1387,7 +1406,11 @@ class Controller:
         from .chat import spoken_prompt
 
         language = self._spoken_language()
-        return "\n" + spoken_prompt(language) if language else ""
+        return "\n" + spoken_prompt(language, self._kana_only()) if language else ""
+
+    def _kana_only(self) -> bool:
+        """The voice pack reads Japanese kana only (no kanji): ask her brain for kana."""
+        return self.settings["voice"] == "openai" and self.settings["tts_source"] == "builtin"
 
     def _in_a_call(self) -> bool:
         """You're in a Teams / Zoom / Meet call right now: she doesn't talk out loud (just shows the text)."""
@@ -1398,9 +1421,19 @@ class Controller:
         """A quick line from the app itself (not from her brain): bubble and voice, like her other lines."""
         self.bubble.say(text, seconds, self.companion.head_rect_global(), self.companion.available_rect())
         try:
-            self.speaker.say(text, "line")
+            spoken = self.speaker.say(text, "line")
         except Exception:
             log.exception("Voice failed")
+            spoken = False
+        if not spoken:
+            self.companion.set_mouth(self._typing_mouth(text))
+
+    @staticmethod
+    def _typing_mouth(text: str):
+        from .bubble import SpeechBubble
+        from .voice import Mouth
+
+        return Mouth(until=time.monotonic() + len(text) * SpeechBubble.TYPE_MS / 1000.0 + 0.1)
 
     # --------------------------------------------------------------- updates
     def _maybe_check_updates(self) -> None:
@@ -1524,6 +1557,8 @@ class Controller:
                        getattr(self, "_setup", None), getattr(self, "_whats_new", None)):
             if window is not None:
                 window.hide()
+        if getattr(self, "_voice_pack", None) is not None:
+            self._voice_pack.stop()
         try:
             self.speaker.stop()
             if (self.speaker.openai is not None and not self.speaker.openai.own_server and self.speaker.openai.model

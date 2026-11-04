@@ -267,12 +267,16 @@ def extract_reminders(text: str) -> tuple[str, list[tuple[str, str]]]:
     return _REMIND_TAG.sub("", text or "").strip(), found[:3]
 
 
-def spoken_prompt(language: str) -> str:
+KANA_ONLY = ("Write the Japanese in hiragana and katakana only, with no kanji at all, because your voice "
+             "can only read kana.")
+
+
+def spoken_prompt(language: str, kana_only: bool = False) -> str:
     """Her voice speaks another language: ask for each reply a second time, in that language, for her voice."""
     return (f"Your voice speaks {language}. After your reply, also write the same line in natural, casual "
             f"spoken {language}, the way you would say it out loud, like this: <say>...</say>. Only your short "
             f"reply line goes in it (not any help after ---). The user reads your reply in English, and hears the "
-            f"<say> line.")
+            f"<say> line." + (" " + KANA_ONLY if kana_only and language == "Japanese" else ""))
 
 
 def extract_spoken(text: str) -> tuple[str, str]:
@@ -506,11 +510,11 @@ class ChatSession:
                          {"role": "assistant", "content": f"[{mood}] {reply}", "time": now, "about": activity[:200]}]
         self._save()
 
-    def translate(self, text: str, language: str) -> str:
+    def translate(self, text: str, language: str, kana_only: bool = False) -> str:
         """Blocking: one of her lines in another language, for her voice (the bubble keeps the English)."""
         system = (self.persona + f"\nTranslate the line you're given into natural, casual spoken {language}, "
                   "keeping your tone. Reply with only the translation: no quotes, no notes, no romanization, "
-                  "no mood tag.")
+                  "no mood tag." + (" " + KANA_ONLY if kana_only and language == "Japanese" else ""))
         raw = self._complete([{"role": "system", "content": system}, {"role": "user", "content": text}], False)
         line = re.sub(r"^\s*\[(\w+)\]\s*", "", raw.strip().splitlines()[0] if raw.strip() else "")
         return line.strip().strip('"「」').strip()

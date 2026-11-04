@@ -1,0 +1,2 @@
+# What the voice pack (DeskMate-Voice.exe) is built from. Not needed to run DeskMate itself.
+kokoro-onnx==0.6.1

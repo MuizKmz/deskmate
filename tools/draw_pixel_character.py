@@ -164,6 +164,16 @@ def _talk(d):
     cheeks(d)
 
 
+def _talk_closed(d):
+    """talk_02: the same face with the mouth closed (she switches between the two while speaking)."""
+    eyes_open(d)
+    px(d, [(15, 21), (16, 21)], "mouth")
+    cheeks(d)
+
+
+EXTRA_FRAMES = {"talk": [_talk_closed]}  # more frames of an animation: talk_02.png, ...
+
+
 @face("blink")
 def _blink(d):
     for ex in (10, 19):  # same as idle, eyes shut
@@ -196,6 +206,11 @@ def main() -> None:
         draw_face(d)
         (out / name).mkdir(parents=True, exist_ok=True)
         img.resize((W * SCALE, H * SCALE), Image.NEAREST).save(out / name / f"{name}_01.png", optimize=True)
+        for number, draw_extra in enumerate(EXTRA_FRAMES.get(name, []), start=2):
+            img, d = body()
+            draw_extra(d)
+            img.resize((W * SCALE, H * SCALE), Image.NEAREST).save(out / name / f"{name}_{number:02d}.png",
+                                                                  optimize=True)
     meta = {
         "name": "Piko",
         "author": "DeskMate",

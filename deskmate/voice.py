@@ -24,7 +24,9 @@ import struct
 import re
 import subprocess
 import sys
+import random
 import threading
+import time
 from typing import Callable
 
 from .chat import ChatConfig, ChatError, _request, list_models
@@ -135,6 +137,10 @@ class WindowsVoice:
             self._process.kill()
         self._process = None
 
+    def speaking(self) -> bool:
+        """Still talking? (Her mouth keeps moving until the hidden PowerShell has finished.)"""
+        return self._process is not None and self._process.poll() is None
+
 
 # ----------------------------------------------------------------- OpenAI voice
 def pick_tts_model(models: list[str]) -> str:
@@ -197,7 +203,7 @@ KOKORO_LANGUAGES = {"a": "American English", "b": "British English", "j": "Japan
                     "e": "Spanish", "f": "French", "h": "Hindi", "i": "Italian", "p": "Portuguese"}
 SAMPLES = {  # a test line each voice can actually say
     "English": "Hi, it's me~ How do I sound?",
-    "Japanese": "こんにちは、私の声はどうですか？",
+    "Japanese": "こんにちは、わたしの こえは どうですか？",  # kana only: every Japanese voice can read it
     "Chinese": "你好，我的声音听起来怎么样？",
     "Spanish": "Hola, soy yo. ¿Qué tal sueno?",
     "French": "Coucou, c'est moi. Comment je sonne ?",
@@ -273,6 +279,19 @@ def _check_not_silent(samples: bytes, width: int) -> None:
             raise ValueError("The clip is silent. Does this voice speak the language of the text?")
 
 
+class PackVoice(OpenAIVoice):
+    """The Natural voice from the built-in voice pack (deskmate/voicepack.py), started when first needed."""
+
+    def __init__(self, pack, voice: str = OWN_SERVER_VOICE, play: Callable[[bytes], None] | None = None):
+        super().__init__(ChatConfig(provider="local", base_url="http://127.0.0.1:0/v1"), voice=voice,
+                         model="kokoro", play=play)
+        self.pack = pack
+
+    def synthesize(self, text: str) -> bytes:
+        self.config.base_url = self.pack.ensure_running()  # (blocking: this already runs on a thread)
+        return super().synthesize(text)
+
+
 def list_voices(config: ChatConfig) -> list[str]:
     """Voice names to choose from: OpenAI's own, or what your server offers (Kokoro: GET /audio/voices)."""
     if config.provider == "openai":
@@ -307,6 +326,88 @@ def stop_wav() -> None:
 
 
 # ---------------------------------------------------------------------- Speaker
+# ------------------------------------------------------------------ her mouth
+def wav_envelope(wav: bytes, step: float = 0.05) -> list[float]:
+    """How loud a (16-bit) WAV clip is every ``step`` seconds, from 0 to 1. Empty if it can't tell."""
+    try:
+        position, rate, channels, width, data = 12, 24000, 1, 2, b""
+        while position + 8 <= len(wav):
+            chunk, size = wav[position:position + 4], struct.unpack_from("<I", wav, position + 4)[0]
+            if chunk == b"fmt ":
+                channels, rate = struct.unpack_from("<HI", wav, position + 10)
+                width = struct.unpack_from("<H", wav, position + 22)[0] // 8
+            elif chunk == b"data":
+                data = wav[position + 8:position + 8 + size]
+                break
+            position += 8 + size + (size & 1)
+        if width != 2 or not data:
+            return []
+        samples = array.array("h", data[: len(data) - len(data) % 2])
+        if sys.byteorder == "big":
+            samples.byteswap()
+        window = max(1, int(rate * step) * channels)
+        levels = []
+        for start in range(0, len(samples), window):
+            part = samples[start:start + window]
+            levels.append((sum(v * v for v in part[::4]) / max(1, len(part[::4]))) ** 0.5)
+        loudest = max(levels, default=0) or 1
+        return [level / loudest for level in levels]
+    except (struct.error, ValueError):
+        return []
+
+
+class Mouth:
+    """Is her mouth open right now? One of these runs for each line she says.
+
+    * With an ``envelope`` (how loud her voice clip is, every ``step`` seconds): open on loud
+      parts, closed in the quiet ones: real lip-sync.
+    * Without one (the Windows voice, or no voice at all while the bubble types): a natural
+      talking rhythm, until ``until`` (a time) or for as long as ``alive()`` says she's talking.
+    """
+
+    OPEN, CLOSE = 0.30, 0.16  # loudness to open / to close again (a little gap, so it doesn't flicker)
+
+    def __init__(self, envelope: list[float] | None = None, step: float = 0.05, until: float | None = None,
+                 alive: Callable[[], bool] | None = None, delay: float = 0.0,
+                 clock: Callable[[], float] = time.monotonic, rng: random.Random | None = None):
+        self.envelope, self.step, self.until, self.alive = envelope, step, until, alive
+        self.clock = clock
+        self.start = clock() + delay
+        self._open = False
+        rng = rng or random.Random()
+        self._rhythm = []  # (seconds open, seconds closed), syllable by syllable
+        t = 0.0
+        while t < 120:
+            pair = (rng.uniform(0.08, 0.17), rng.uniform(0.05, 0.11))
+            self._rhythm.append(pair)
+            t += sum(pair)
+
+    def state(self, now: float | None = None) -> str:
+        """'open', 'closed', or 'done' (she has finished this line)."""
+        now = self.clock() if now is None else now
+        if now < self.start:
+            return "closed"
+        t = now - self.start
+        if self.envelope is not None:
+            index = int(t / self.step)
+            if index >= len(self.envelope):
+                return "done"
+            level = self.envelope[index]
+            self._open = level >= (self.CLOSE if self._open else self.OPEN)
+            return "open" if self._open else "closed"
+        if self.until is not None and now >= self.until:
+            return "done"
+        if self.alive is not None and not self.alive():
+            return "done"
+        for opened, closed in self._rhythm:
+            if t < opened:
+                return "open"
+            if t < opened + closed:
+                return "closed"
+            t -= opened + closed
+        return "closed"
+
+
 # Windows voices say their language as a culture code ("ja-JP"): the language she'd speak with it.
 CULTURE_LANGUAGES = {"ja": "Japanese", "zh": "Chinese", "ko": "Korean", "es": "Spanish", "fr": "French",
                      "de": "German", "it": "Italian", "pt": "Portuguese", "hi": "Hindi", "ms": "Malay",
@@ -333,7 +434,8 @@ class Speaker:
     def __init__(self, windows: WindowsVoice, openai: OpenAIVoice | None,
                  run_in_background: Callable, mode: str = "off", everything: bool = True,
                  hush: Callable[[], bool] | None = None, language: Callable[[], str] | None = None,
-                 translate: Callable[[str, str], str] | None = None):
+                 translate: Callable[[str, str], str] | None = None,
+                 on_mouth: Callable[["Mouth | None"], None] | None = None):
         self.windows = windows
         self.openai = openai
         self._run = run_in_background
@@ -342,6 +444,7 @@ class Speaker:
         self.hush = hush or (lambda: False)  # True while she must not talk out loud (you're in a call)
         self.language = language or (lambda: "")  # the language her voice speaks, if not English
         self.translate = translate
+        self.on_mouth = on_mouth  # told when her voice starts (with a Mouth to move her lips) or stops (None)
         self._turn = 0  # newer lines win over older, still-loading ones
 
     def wants(self, kind: str) -> bool:
@@ -386,6 +489,7 @@ class Speaker:
                     return  # she has already moved on to another line
                 if ok:
                     self.openai.play(value)
+                    self._mouth(Mouth(envelope=wav_envelope(value)))  # lips in time with the clip
                 else:
                     log.warning("Natural voice failed (%s); using the Windows voice", value)
                     self._windows(english)  # (the Windows voice may not speak the other language)
@@ -398,13 +502,25 @@ class Speaker:
             return False
         try:
             self.windows.speak(spoken)
-            return True
         except OSError:
             log.warning("Windows voice failed", exc_info=True)
             return False
+        speaking = getattr(self.windows, "speaking", None)
+        # PowerShell takes a moment to start talking; then the mouth moves until it's done.
+        self._mouth(Mouth(alive=speaking if callable(speaking) else None, delay=0.6,
+                          until=None if callable(speaking) else time.monotonic() + 0.6 + 0.07 * len(spoken)))
+        return True
+
+    def _mouth(self, mouth: "Mouth | None") -> None:
+        if self.on_mouth is not None:
+            try:
+                self.on_mouth(mouth)
+            except Exception:
+                log.warning("Couldn't move her mouth", exc_info=True)
 
     def stop(self) -> None:
         self._turn += 1
         self.windows.stop()
         if self.openai is not None:
             self.openai.stop()
+        self._mouth(None)

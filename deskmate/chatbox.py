@@ -10,8 +10,8 @@ from typing import Any, Callable
 from PySide6.QtCore import QObject, QPoint, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QKeyEvent, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QScrollArea, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QProgressBar, QPushButton, QScrollArea, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
 from .chat import KEY_NAMES, MODEL_SETTINGS, OLLAMA_URL, ChatConfig, ChatError, list_models, mask, pick_model
@@ -303,13 +303,20 @@ class ChatSettingsDialog(QDialog):
         self._models(tested)
 
 
+class _Progress(QObject):
+    """Download progress, from a background thread to the window (Qt queues it across threads)."""
+
+    changed = Signal(int, int)  # (bytes so far, total bytes or 0)
+
+
 class VoiceSettingsDialog(QDialog):
-    """Which voice she speaks with: any Windows voice, and the Natural voice from OpenAI or your own server."""
+    """Which voice she speaks with: any Windows voice, and the Natural voice from OpenAI, the built-in
+    voice pack, or your own server."""
 
     SAMPLE = "Hi, it's me~ How do I sound?"
 
     def __init__(self, settings, openai_key: str, name: str, parent=None, list_windows=None, make_windows=None,
-                 play=None):
+                 play=None, voice_pack=None, download=None):
         from .voice import OWN_SERVER_URL, WindowsVoice, list_windows_voices, play_wav
 
         super().__init__(parent)
@@ -323,6 +330,9 @@ class VoiceSettingsDialog(QDialog):
         self._windows = (make_windows or WindowsVoice)()
         self._play = play or play_wav
         self._cultures = {settings["windows_voice"]: settings["windows_voice_lang"]} if settings["windows_voice"] else {}
+        self._pack = voice_pack
+        self._download = download
+        self._cancel_download = False
 
         # --- Windows voice
         self.windows_voice = QComboBox()
@@ -340,6 +350,8 @@ class VoiceSettingsDialog(QDialog):
         # --- Natural voice
         self.source = QComboBox()
         self.source.addItem("OpenAI (uses your OpenAI key)", "openai")
+        if voice_pack is not None:
+            self.source.addItem("Built-in voice pack (free, offline, download once)", "builtin")
         self.source.addItem("My own server, e.g. Kokoro (free, on this PC)", "local")
         self.source.setCurrentIndex(max(0, self.source.findData(settings["tts_source"])))
         self.url = QLineEdit(settings["tts_url"] or OWN_SERVER_URL)
@@ -358,6 +370,26 @@ class VoiceSettingsDialog(QDialog):
         voice_row.addWidget(self.load)
         voice_row.addWidget(self.test_natural)
 
+        from .voicepack import PACK_MB
+
+        self.pack_status = QLabel("")
+        self.pack_status.setWordWrap(True)
+        self.pack_download = QPushButton(f"Download (~{PACK_MB} MB)")
+        self.pack_download.clicked.connect(self._download_pack)
+        self.pack_progress = QProgressBar()
+        self.pack_progress.setTextVisible(True)
+        self.pack_progress.hide()
+        self.pack_progress.setMaximumHeight(16)
+        pack_row = QHBoxLayout()
+        pack_row.setContentsMargins(0, 0, 0, 0)
+        pack_row.addWidget(self.pack_status, 1)
+        pack_row.addWidget(self.pack_progress, 1)
+        pack_row.addWidget(self.pack_download)
+        self.pack_box = QWidget()
+        self.pack_box.setLayout(pack_row)
+        self._progress = _Progress(self)
+        self._progress.changed.connect(self._show_progress)
+
         self.translate = QCheckBox("Say her lines in the voice's language (chat stays English)")
         self.translate.setChecked(settings["voice_translate"])
         self.translate.setToolTip("With a Japanese voice she says her lines in Japanese. Uses your chat brain to "
@@ -371,13 +403,15 @@ class VoiceSettingsDialog(QDialog):
         self.form.addRow(QLabel("<b>Natural voice</b>"))
         self.form.addRow("From", self.source)
         self.form.addRow("Server address", self.url)
+        self.form.addRow("Voice pack", self.pack_box)
         self.form.addRow("Voice", voice_row)
         self.form.addRow("", self.language)
         self.form.addRow("", self.translate)
         note = QLabel("More Windows voices: a language's speech pack (Windows Settings › Time & language) adds some; "
-                      "NaturalVoiceSAPIAdapter adds Windows' natural voices. Your own server: run Kokoro-FastAPI "
-                      "(github.com/remsky/Kokoro-FastAPI) and keep the address above. Voices like af_bella or "
-                      "jf_alpha (Japanese), even mixes like af_bella+af_sky.")
+                      "NaturalVoiceSAPIAdapter adds Windows' natural voices. The voice pack is Kokoro, free and "
+                      "offline (one download, then DeskMate starts it by itself). Your own server: run "
+                      "Kokoro-FastAPI and keep the address above. Voices like af_bella or jf_alpha (Japanese), "
+                      "even mixes like af_bella+af_sky.")
         note.setWordWrap(True)
         note.setStyleSheet("color: gray;")
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
@@ -415,6 +449,9 @@ class VoiceSettingsDialog(QDialog):
         return self.url.text().strip().rstrip("/")
 
     def natural_config(self) -> ChatConfig:
+        """(For the pack, call this on a background thread: it starts the pack.)"""
+        if self.chosen_source == "builtin":
+            return ChatConfig(provider="local", base_url=self._pack.ensure_running())
         if self.chosen_source == "local":
             return ChatConfig(provider="local", base_url=self.chosen_url)
         return ChatConfig(provider="openai", api_key=self._openai_key)
@@ -422,9 +459,13 @@ class VoiceSettingsDialog(QDialog):
     def _source_changed(self, *_args, first: bool = False) -> None:
         from .voice import OPENAI_VOICES, OWN_SERVER_VOICE
 
-        own = self.chosen_source == "local"
-        self.form.setRowVisible(self.url, own)
-        current = self._settings["openai_voice"] if first else ""
+        own = self.chosen_source in ("local", "builtin")
+        self.form.setRowVisible(self.url, self.chosen_source == "local")
+        self.form.setRowVisible(self.pack_box, self.chosen_source == "builtin")
+        # Your server and the pack are both Kokoro: switching between them keeps the voice you picked.
+        was_own = getattr(self, "_was_own", False)
+        self._was_own = own
+        current = self._settings["openai_voice"] if first else (self.voice.currentText().strip() if was_own else "")
         self.voice.clear()
         if own:
             if current in OPENAI_VOICES or not current:
@@ -437,6 +478,53 @@ class VoiceSettingsDialog(QDialog):
                 current = "nova"
         self.voice.setEditText(current)
         self.status.setText("" if own or self._openai_key else "No OpenAI key yet: add one in Chat settings.")
+        self._show_pack()
+
+    # ------------------------------------------------------------------ voice pack
+    def _show_pack(self) -> None:
+        from .voicepack import PACK_MB
+
+        if self._pack is None:
+            return
+        ready = self._pack.installed
+        self.pack_status.setText("✓ Downloaded (starts by itself)" if ready else "Not downloaded yet")
+        self.pack_download.setText("Download again" if ready else f"Download (~{PACK_MB} MB)")
+        usable = ready or self.chosen_source != "builtin"
+        self.load.setEnabled(usable)
+        self.test_natural.setEnabled(usable)
+
+    def _download_pack(self) -> None:
+        from .voicepack import download
+
+        folder = self._pack.folder
+        run = self._download or download
+        self.pack_download.setEnabled(False)
+        self.pack_progress.setRange(0, 0)  # "busy" until the size is known
+        self.pack_status.hide()
+        self.pack_progress.show()
+        self.status.setText("Downloading the voice pack...")
+        self._cancel_download = False
+        progress = self._progress.changed.emit
+
+        def done(ok: bool, value) -> None:
+            self.pack_download.setEnabled(True)
+            self.pack_progress.hide()
+            self.pack_status.show()
+            self.status.setText("✓ Voice pack ready! Pick a voice and press Test." if ok else self._explain(value))
+            self._show_pack()
+
+        self._pack.stop()  # (replacing it while it runs wouldn't work on Windows)
+        self._worker.run(lambda: run(folder, progress, lambda: self._cancel_download), done)
+
+    def _show_progress(self, done: int, total: int) -> None:
+        if total:
+            self.pack_progress.setRange(0, 1000)
+            self.pack_progress.setValue(int(done * 1000 / total))
+            self.pack_progress.setFormat(f"{done / 1048576:.0f} / {total / 1048576:.0f} MB")
+
+    def reject(self) -> None:
+        self._cancel_download = True  # closing the box stops a download
+        super().reject()
 
     # ------------------------------------------------------------------ Windows
     def _got_windows_voices(self, ok: bool, voices) -> None:
@@ -473,8 +561,7 @@ class VoiceSettingsDialog(QDialog):
     def _load_voices(self) -> None:
         from .voice import list_voices
 
-        config = self.natural_config()
-        self._busy("Connecting...")
+        self._busy("Starting the voice pack..." if self.chosen_source == "builtin" else "Connecting...")
 
         def done(ok: bool, value) -> None:
             self._idle()
@@ -488,7 +575,7 @@ class VoiceSettingsDialog(QDialog):
             self.voice.setEditText(keep if keep in value or not value else value[0])
             self.status.setText(f"✓ {len(value)} voices available." if value else "Connected, but no voices listed.")
 
-        self._worker.run(lambda: list_voices(config), done)
+        self._worker.run(lambda: list_voices(self.natural_config()), done)  # (starts the pack, on a thread)
 
     def _voice_changed(self, name: str) -> None:
         from .voice import voice_language
@@ -504,9 +591,12 @@ class VoiceSettingsDialog(QDialog):
             self.language.setText(f"{language} voice: reads her English lines the {language} way.")
 
     def _test_natural(self) -> None:
-        from .voice import OpenAIVoice, sample_for
+        from .voice import OpenAIVoice, PackVoice, sample_for
 
-        natural = OpenAIVoice(self.natural_config(), voice=self.chosen_voice)
+        if self.chosen_source == "builtin":
+            natural = PackVoice(self._pack, voice=self.chosen_voice)  # starts the pack on the thread below
+        else:
+            natural = OpenAIVoice(self.natural_config(), voice=self.chosen_voice)
         sample = sample_for(natural.voice) if natural.own_server else self.SAMPLE
         self._busy("Asking for a sample...")
 
@@ -524,8 +614,12 @@ class VoiceSettingsDialog(QDialog):
         self._worker.run(lambda: natural.synthesize(sample), done)
 
     def _explain(self, error) -> str:
-        if isinstance(error, ValueError):
+        from .voicepack import VoicePackError
+
+        if isinstance(error, (ValueError, VoicePackError)):
             return str(error)
+        if isinstance(error, OSError) and self.chosen_source == "builtin":
+            return f"Couldn't download the voice pack: {error}"
         if isinstance(error, ChatError) and error.kind == "offline" and self.chosen_source == "local":
             return "Can't reach your server. Is Kokoro-FastAPI running, at this address?"
         return describe_error(error)

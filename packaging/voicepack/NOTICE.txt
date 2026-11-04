@@ -1,0 +1,35 @@
+DeskMate voice pack
+===================
+
+A small offline voice for DeskMate (https://github.com/MuizKmz/deskmate). DeskMate downloads
+this folder once into %APPDATA%\DeskMate\voicepack and starts DeskMate-Voice.exe by itself when
+she speaks. It only listens on 127.0.0.1 (this PC) and stops when DeskMate quits.
+
+This pack is a separate program from DeskMate.exe. Because it includes phonemizer and
+espeak-ng (both GNU GPL version 3), the pack as a whole is distributed under the GNU General
+Public License, version 3 or later. You can get its complete source code from the links below;
+the full license texts are in the licenses folder.
+
+What's inside, and where its source is
+--------------------------------------
+- deskmate_voice (the little server), GPL-3.0-or-later as part of this pack
+    https://github.com/MuizKmz/deskmate/tree/main/deskmate_voice
+    built with packaging/voicepack.spec and .github/workflows/voicepack.yml in the same repository
+- Kokoro-82M voice model (models/kokoro-v1.0.int8.onnx, models/voices-v1.0.bin), Apache-2.0
+    https://huggingface.co/hexgrad/Kokoro-82M
+    ONNX export: https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0
+- kokoro-onnx, MIT          https://github.com/thewh1teagle/kokoro-onnx
+- phonemizer, GPL-3.0       https://github.com/bootphon/phonemizer
+- espeak-ng, GPL-3.0+       https://github.com/espeak-ng/espeak-ng
+    (shipped through espeakng-loader: https://github.com/thewh1teagle/espeakng-loader)
+- ONNX Runtime, MIT         https://github.com/microsoft/onnxruntime
+- NumPy, BSD-3-Clause       https://github.com/numpy/numpy
+- Python, PSF License       https://www.python.org/
+- plus the small libraries listed in the licenses folder, each under its own license.
+
+If you'd rather have a copy of the source on a disk or by email instead of the links above,
+open an issue at https://github.com/MuizKmz/deskmate/issues and it will be provided (valid for
+at least three years after this pack's release).
+
+This program comes with ABSOLUTELY NO WARRANTY. See the GNU GPL for details:
+https://www.gnu.org/licenses/gpl-3.0.html

@@ -173,6 +173,7 @@ class Companion(QWidget):
         self._cache_dpr = 0.0
 
         self._requested = "idle"  # what the brain asked for
+        self._mouth = None  # voice.Mouth while she's saying a line (moves her lips on the talk frames)
         self._expr = "idle"  # what is actually shown
         self._expr_started = self._t0
         self._prev: tuple[str, int, bool] | None = None
@@ -450,6 +451,22 @@ class Companion(QWidget):
     def walking(self) -> bool:
         return self._walk is not None
 
+    TALKING_FACES = ("idle", "talk")  # while she says a line, these show the talk frames (other moods stay)
+
+    def set_mouth(self, mouth) -> None:
+        """She starts saying a line (a voice.Mouth: open/closed/done), or stops (None)."""
+        self._mouth = mouth
+        self._show(self._effective())
+        self._kick()
+
+    def talking(self, now: float | None = None) -> bool:
+        if self._mouth is None:
+            return False
+        return self._mouth.state(self._clock() if now is None else now) != "done"
+
+    def mouth_open(self, now: float | None = None) -> bool:
+        return self._mouth is not None and self._mouth.state(self._clock() if now is None else now) == "open"
+
     def set_expression(self, name: str) -> None:
         self._requested = name
         self._sleeping = name == "sleep"
@@ -523,6 +540,9 @@ class Companion(QWidget):
         if self._walk is not None and "walk" in self._frames:
             return "walk"
         animation = self.pack.resolve(self._requested)
+        if (self._mouth is not None and animation in self.TALKING_FACES and len(self._frames.get("talk", ())) >= 2
+                and self.talking()):
+            return "talk"  # her lips move with her voice (or while the bubble types)
         return animation if animation in self._frames else "idle"
 
     def _mirrored(self, animation: str) -> bool:
@@ -553,6 +573,8 @@ class Companion(QWidget):
         frames = self._frames.get(animation) or self._frames["idle"]
         if len(frames) == 1:
             return 0
+        if animation == "talk":  # talk_01 = mouth open, talk_02 = closed: moved by her voice, not a clock
+            return 0 if self.mouth_open(now) else 1
         meta = self.pack.animations.get(animation)
         fps = meta.fps if meta else 6.0
         loop = meta.loop if meta else True
@@ -584,7 +606,7 @@ class Companion(QWidget):
             or now < self._blink_until + 0.05
             or abs(self._swing) > 0.05
             or abs(self._swing_speed) > 0.5
-            or len(self._frames.get(self._expr, ())) > 1
+            or (len(self._frames.get(self._expr, ())) > 1 and (self._expr != "talk" or self._mouth is not None))
         )
 
     def _on_frame(self) -> None:
@@ -605,6 +627,8 @@ class Companion(QWidget):
             self._fall_step(dt, now)
         elif self._walk is not None:
             self._walk_step(dt, now)
+        if self._mouth is not None and not self.talking(now):
+            self._mouth = None  # she finished the line
         self._show(self._effective())
         self._update_blink(now)
         self._timer.setInterval(FAST_MS if self._busy(now) else CALM_MS)

@@ -207,6 +207,53 @@ class SpeakerTests(unittest.TestCase):
         self.assertEqual(V.culture_language("en-US"), "")
         self.assertEqual(V.culture_language("ms-MY"), "Malay")
 
+    def test_her_mouth_follows_her_voice(self):
+        import struct
+
+        tone = FakeOpenAI.WAV  # 0.2 s of sound...
+        silence = bytes(4800)  # ...then 0.1 s of quiet
+        clip = tone[:4] + struct.pack("<I", len(tone) + len(silence) - 8) + tone[8:40] + \
+            struct.pack("<I", len(tone) - 44 + len(silence)) + tone[44:] + silence
+        envelope = V.wav_envelope(clip, step=0.05)
+        self.assertEqual(len(envelope), 6)
+        self.assertTrue(all(level > 0.9 for level in envelope[:4]))
+        self.assertEqual(envelope[4:], [0.0, 0.0])
+        self.assertEqual(V.wav_envelope(b"not a wav"), [])
+
+        now = [100.0]
+        mouth = V.Mouth(envelope=envelope, step=0.05, clock=lambda: now[0])
+        states = []
+        for t in (0.0, 0.1, 0.22, 0.27, 0.31):
+            states.append(mouth.state(100.0 + t))
+        self.assertEqual(states, ["open", "open", "closed", "closed", "done"])  # open on sound, shut in silence
+
+        alive = [True]
+        talking = V.Mouth(alive=lambda: alive[0], delay=0.5, clock=lambda: now[0], rng=__import__("random").Random(1))
+        self.assertEqual(talking.state(100.2), "closed")  # PowerShell is still starting
+        seen = {talking.state(100.5 + i * 0.03) for i in range(40)}
+        self.assertEqual(seen, {"open", "closed"})  # a talking rhythm while she speaks...
+        alive[0] = False
+        self.assertEqual(talking.state(102.0), "done")  # ...until the voice has finished
+        typing = V.Mouth(until=101.0, clock=lambda: now[0])
+        self.assertEqual(typing.state(101.5), "done")
+
+        # The Speaker tells the window when her lips should move.
+        speaker, windows, natural = self.make(mode="windows")
+        mouths = []
+        speaker.on_mouth = mouths.append
+        windows.speaking.return_value = True
+        speaker.say("Hello there", "chat")
+        self.assertIsNone(mouths[0])  # (an old line stops first)
+        self.assertIsInstance(mouths[-1], V.Mouth)
+        self.assertIs(mouths[-1].alive, windows.speaking)
+        speaker, windows, natural = self.make(mode="openai")
+        natural.synthesize.return_value = clip
+        speaker.on_mouth = mouths.append
+        speaker.say("Hello there", "chat")
+        self.assertEqual(mouths[-1].envelope, envelope)  # lips in time with the clip
+        speaker.stop()
+        self.assertIsNone(mouths[-1])
+
     def test_openai_voice_and_falling_back_to_windows(self):
         speaker, windows, natural = self.make(mode="openai")
         speaker.say("hi", "chat")

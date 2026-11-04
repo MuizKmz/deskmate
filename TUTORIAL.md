@@ -240,6 +240,20 @@ There was no "eyes closed" drawing, so `tools/make_blink.py` builds one from two
 ```
 </details>
 
+### Talking: lips that follow her voice
+
+For her mouth to move, she needs two pictures that are *the same except for the mouth*: `talk_01` (open) and `talk_02` (closed). Her talk picture only came with the mouth open, so `tools/make_mouth.py` makes the closed one from it, the same trick as the blink: find the open mouth (the saturated pink blob in the lower middle of the face), paint it over with the skin around it (OpenCV inpainting), and draw a small closed smile in the colour of the mouth's own outline. Piko's are pixel art, so `draw_pixel_character.py` simply draws a second talk face.
+
+What decides *when* it's open is a small object, `voice.Mouth`, one per line she says:
+
+| She's… | The mouth follows |
+|---|---|
+| Speaking with a natural voice (OpenAI, Kokoro) | The clip itself: `wav_envelope()` measures how loud it is every 50 ms. Loud = open, quiet = closed, with two thresholds (open at 0.30, close at 0.16) so it doesn't flicker on the edge. Real lip-sync. |
+| Speaking with the Windows voice | There's no audio to look at (Windows plays it), so a random-but-natural rhythm of syllables (open 80–170 ms, closed 50–110 ms) runs for as long as the PowerShell is still talking, after a 0.6 s head start for it to begin |
+| Not speaking (voice off) | The same rhythm, for as long as the bubble is typing the words |
+
+The window asks `mouth.state(now)` ("open", "closed" or "done") whenever it draws the talk frames, so the frame isn't picked by a clock like other animations, but by her voice. Only her plain faces (idle, talk) switch to talking. A blush or a pout stays, because the mood matters more than the mouth.
+
 ### Gravity in four lines
 
 Every frame she moves a little, using her speed in **pixels per second**:
@@ -403,6 +417,22 @@ Two small ideas keep it pleasant:
 
 Supporting a *protocol* instead of a *company* is what makes this cheap: one class, many voices.
 
+**A voice with no setup: the voice pack.** Kokoro sounded great, but "install Docker, run this command, keep it running" is too much to ask of most people. So DeskMate can download the voice once and run it by itself. The interesting part is *how* it's shipped:
+
+| Option | Why not (or why) |
+|---|---|
+| Put Kokoro inside DeskMate.exe | The download goes from ~30 MB to ~200 MB for everyone, even people who never turn the voice on. And Kokoro's pronunciation step (phonemizer + espeak-ng) is GPL: putting it in DeskMate.exe would put DeskMate itself under the GPL. |
+| **A separate voice pack** ✓ | A second little program, `DeskMate-Voice.exe` (`deskmate_voice/server.py`, built by `packaging/voicepack.spec`), downloaded only by people who want it. DeskMate talks to it over `127.0.0.1` like any voice server, so DeskMate.exe stays small and keeps its own license; the pack is GPL with its sources listed in its `NOTICE.txt`. |
+
+The pack speaks the same `/audio/speech` protocol, so `PackVoice` is just `OpenAIVoice` whose address is filled in at the last moment: `synthesize()` first calls `VoicePack.ensure_running()`, which picks a free port, starts the exe hidden (`CREATE_NO_WINDOW`), and waits until `GET /v1/models` answers (about a second, to load the model). All of that happens on the background thread that makes the clip, never on the window's thread. Two details keep it tidy:
+
+- **It can't be left behind.** DeskMate stops it when she quits, and the pack is also given DeskMate's process id (`--parent`) and checks every two seconds that DeskMate is still there. If DeskMate crashes, the pack quits by itself instead of lingering in Task Manager.
+- **Downloads are checked.** The zip is streamed with a progress bar (a Qt signal carries the numbers from the download thread to the window), its size must match, nothing in it may write outside its folder ("zip slip"), and it must contain the voice model, before it replaces an old pack.
+
+One surprise: espeak-ng reads Japanese *kana* fine, but reads every kanji as "Chinese letter". So when the pack is her voice, `spoken_prompt(..., kana_only=True)` asks her brain to write the spoken line in hiragana and katakana only, and the server drops any kanji that slip through.
+
+The pack is built and published by its own workflow (`.github/workflows/voicepack.yml`): build the exe, download the model and check its SHA-256, copy every license, **start it and make it say an English and a Japanese line**, then zip it as the `voicepack-v1` release (never marked "Latest", so the update check ignores it).
+
 **"It worked, but there's no sound."** The first real test with Kokoro played nothing, and said nothing either. Two lessons:
 
 - *Streamed* WAV files don't know their length when the header is written, so they put 0 or `0xFFFFFFFF` there. Browsers shrug; Windows' `PlaySound` silently refuses. DeskMate now asks for one whole clip (`"stream": false`), and `fix_wav()` repairs such headers anyway (it walks the RIFF chunks, finds `data`, and writes the real sizes).
@@ -529,7 +559,7 @@ Running from source needs Python. Real users want a download that just works. Th
 ```mermaid
 flowchart LR
     T["git push origin v0.3.0"] --> GA[GitHub Actions<br/>Windows machine]
-    GA --> TS[Run the 141 tests]
+    GA --> TS[Run the 156 tests]
     TS --> PI["PyInstaller<br/>DeskMate.exe + _internal"]
     PI --> CK["DeskMate.exe --check"]
     CK --> IS[Inno Setup<br/>installer]
