@@ -1,0 +1,106 @@
+# Builds the voice pack (DeskMate-Voice-win64.zip) and publishes it as the "voicepack-v1" release.
+# DeskMate's Voice settings download it from there (deskmate/voicepack.py, PACK_URL).
+# Start it on GitHub: Actions > Voice pack > Run workflow. It's separate from the app release on
+# purpose: the pack hardly ever changes, and it's never marked "Latest" (so update checks skip it).
+name: Voice pack
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PYTHONUTF8: "1"
+  TAG: voicepack-v1
+  MODELS: https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0
+
+jobs:
+  voicepack:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install
+        run: python -m pip install -r packaging/voicepack/requirements.txt "pyinstaller>=6,<7"
+
+      - name: Build DeskMate-Voice.exe
+        run: pyinstaller packaging/voicepack.spec --noconfirm
+
+      - name: Voice model (checked against known checksums)
+        shell: pwsh
+        run: |
+          $models = "dist\DeskMate-Voice\models"
+          New-Item -ItemType Directory -Force $models | Out-Null
+          $files = @{
+            "kokoro-v1.0.int8.onnx" = "6e742170d309016e5891a994e1ce1559c702a2ccd0075e67ef7157974f6406cb"
+            "voices-v1.0.bin"       = "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
+          }
+          foreach ($name in $files.Keys) {
+            Invoke-WebRequest "$env:MODELS/$name" -OutFile "$models\$name"
+            $hash = (Get-FileHash "$models\$name" -Algorithm SHA256).Hash.ToLower()
+            if ($hash -ne $files[$name]) { Write-Error "$name has checksum $hash"; exit 1 }
+          }
+
+      - name: Licenses and notice
+        shell: pwsh
+        run: |
+          python packaging/voicepack/collect_licenses.py dist\DeskMate-Voice\licenses
+          Copy-Item packaging\voicepack\NOTICE.txt dist\DeskMate-Voice\NOTICE.txt
+          Invoke-WebRequest https://www.gnu.org/licenses/gpl-3.0.txt -OutFile dist\DeskMate-Voice\LICENSE-GPL-3.0.txt
+          Invoke-WebRequest https://www.apache.org/licenses/LICENSE-2.0.txt -OutFile dist\DeskMate-Voice\licenses\Kokoro-82M-model-Apache-2.0.txt
+
+      - name: It speaks
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\DeskMate-Voice\DeskMate-Voice.exe -ArgumentList "--port","8899" -PassThru
+          $ready = $false
+          for ($i = 0; $i -lt 120 -and -not $ready; $i++) {
+            try { Invoke-RestMethod http://127.0.0.1:8899/v1/models | Out-Null; $ready = $true } catch { Start-Sleep -Milliseconds 500 }
+          }
+          if (-not $ready) { Write-Error "The voice pack didn't start"; Stop-Process $p -Force; exit 1 }
+          foreach ($line in @(@{ voice = "af_heart"; input = "Hi, it's me! How do I sound?" },
+                              @{ voice = "jf_alpha"; input = "こんにちは、わたしの こえは どうですか？" })) {
+            $body = @{ model = "kokoro"; voice = $line.voice; input = $line.input } | ConvertTo-Json
+            Invoke-WebRequest http://127.0.0.1:8899/v1/audio/speech -Method Post -ContentType "application/json; charset=utf-8" `
+              -Body ([Text.Encoding]::UTF8.GetBytes($body)) -OutFile "dist\$($line.voice).wav"
+            $size = (Get-Item "dist\$($line.voice).wav").Length
+            if ($size -lt 20000) { Write-Error "$($line.voice): only $size bytes of sound"; Stop-Process $p -Force; exit 1 }
+            "$($line.voice): $size bytes"
+          }
+          Stop-Process $p -Force
+          Remove-Item dist\DeskMate-Voice\voicepack.log -ErrorAction SilentlyContinue
+
+      - name: Zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\DeskMate-Voice\* -DestinationPath dist\DeskMate-Voice-win64.zip
+          $hash = (Get-FileHash dist\DeskMate-Voice-win64.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  DeskMate-Voice-win64.zip" | Set-Content dist\DeskMate-Voice-SHA256.txt
+          Get-Content dist\DeskMate-Voice-SHA256.txt
+          "{0:N0} MB" -f ((Get-Item dist\DeskMate-Voice-win64.zip).Length / 1MB)
+
+      - name: Publish the voice pack release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = @"
+          The free offline voice for DeskMate. You don't need to download this yourself:
+          in DeskMate, open **Settings › Voice › Voice settings**, pick **Built-in voice pack** and press **Download**.
+
+          Kokoro-82M (Apache-2.0) through kokoro-onnx, phonemizer and espeak-ng. The pack is a separate program
+          from DeskMate and is distributed under the GNU GPL v3 (see NOTICE.txt inside for sources and licenses).
+          "@
+          $files = "dist\DeskMate-Voice-win64.zip", "dist\DeskMate-Voice-SHA256.txt"
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG @files --clobber
+          } else {
+            gh release create $env:TAG @files --target "${{ github.sha }}" --title "DeskMate voice pack 1" --notes $notes --latest=false
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
