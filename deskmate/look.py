@@ -254,8 +254,9 @@ class QuickReplies(QWidget):
         while self._row.count():
             widget = self._row.takeAt(0).widget()
             if widget is not None:
-                widget.setParent(None)
-                widget.deleteLater()
+                from .chatbox import discard
+
+                discard(widget)
         for answer in answers:
             self._row.addWidget(self._chip(answer, answer=True))
         self._row.addWidget(self._chip("💬", answer=False))

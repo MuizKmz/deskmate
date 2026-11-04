@@ -725,6 +725,9 @@ class QtSmokeTests(unittest.TestCase):
                 spin(0.05)
             self.assertEqual(log.bubble_texts(), [("user", "hello! remind me to stretch in 30 min"),
                                                   ("assistant", "Hi hi~ I'll remind you!")])
+            # The "..." typing bubble is gone, and didn't pop up as a stray little window of its own.
+            strays = [w for w in QApplication.topLevelWidgets() if w.isVisible() and type(w).__name__ == "QWidget"]
+            self.assertEqual(strays, [])
             self.assertEqual([r.text for r in controller.reminders.upcoming()], ["stretch"])
 
             # "Chat with..." while the log is open just brings the log forward.
@@ -872,6 +875,9 @@ class QtSmokeTests(unittest.TestCase):
             while not watch.replies.isVisible() and time.monotonic() < deadline:
                 spin(0.05)
             self.assertEqual(watch.replies.answers(), ["Yes, every day!", "Just today"])
+            spin(0.1)
+            strays = [w for w in QApplication.topLevelWidgets() if w.isVisible() and type(w).__name__ == "QPushButton"]
+            self.assertEqual(strays, [])  # the old chips didn't pop up on their own either
             fake.reply = "[happy] Hardworking~ I'm proud of you!"
             chip = [b for b in watch.replies.findChildren(QPushButton) if b.text() == "Yes, every day!"][0]
             chip.click()

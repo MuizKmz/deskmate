@@ -545,6 +545,19 @@ def describe_error(error: BaseException) -> str:
     return f"Error: {error}"
 
 
+def discard(widget: QWidget) -> None:
+    """Remove a widget from a window for good, right away.
+
+    hide() first: a widget added to a visible window has a "show me" queued by Qt. If it's taken
+    out (setParent(None)) before that runs, it would pop up as a stray little window of its own.
+    An explicit hide() cancels that. setParent(None) makes it disappear from the window at once
+    (deleteLater alone waits for the event loop), and deleteLater frees it.
+    """
+    widget.hide()
+    widget.setParent(None)
+    widget.deleteLater()
+
+
 def details_html(text: str) -> str:
     """Her longer help (steps, an example, a question) as simple rich text: code blocks get a box."""
     out = []
@@ -755,8 +768,7 @@ class ChatLogWindow(QWidget):
         while self.column.count():
             widget = self.column.takeAt(0).widget()
             if widget is not None:
-                widget.setParent(None)  # gone right away (deleteLater alone waits for the event loop)
-                widget.deleteLater()
+                discard(widget)
         everything = self._lines + self._pending + self._notes
         if not everything and not self._waiting:
             empty = QLabel(f"No chat yet today.\nSay hi to {self._name}~")
@@ -990,8 +1002,7 @@ class MemoryWindow(QWidget):
         while self.column.count():
             widget = self.column.takeAt(0).widget()
             if widget is not None:
-                widget.setParent(None)
-                widget.deleteLater()
+                discard(widget)
         self.subtitle.setText(self._name if enabled else f"{self._name} · remembering is switched off")
         if memory.empty:
             empty = QLabel(f"Nothing yet.\nChat with {self._name}, tell her what you like,\n"
