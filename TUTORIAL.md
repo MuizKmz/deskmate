@@ -509,6 +509,19 @@ Edit `"persona"` in `characters/yuki/character.json` (say, make her talk like a 
 
 ---
 
+### A Settings window without a Save button
+
+As features piled up, the right-click menu grew to twenty switches in a submenu. `settings_window.py` moves them into one glass window with tabs, and keeps the menu for everyday things.
+
+Two small rules keep it simple:
+
+- **Every control calls the same method the menu used to** (`_set_gravity`, `_set_voice`, …). There's still one place that changes a setting; the window is just another way in.
+- **The window never keeps its own copy of the settings.** `refresh()` reads them back from `settings` (the one source of truth) whenever the window opens or something changes elsewhere (`_settings_changed()`). Switch the voice from the setup window, and the open Settings window follows. While filling in the controls, `blockSignals(True)` stops them from firing "changed!" back at the app.
+
+The **first-run setup** (`welcome.SetupWizard`) is the same idea in four steps (chat brain, voice, buddy mode, done), and **What's new** is shown once per version: `seen_version` in the settings remembers the last version you saw.
+
+---
+
 ## 10 · 📦 Shipping it
 
 Running from source needs Python. Real users want a download that just works. Three tools turn the code into that, and GitHub runs them for you.
@@ -516,7 +529,7 @@ Running from source needs Python. Real users want a download that just works. Th
 ```mermaid
 flowchart LR
     T["git push origin v0.3.0"] --> GA[GitHub Actions<br/>Windows machine]
-    GA --> TS[Run the 140 tests]
+    GA --> TS[Run the 141 tests]
     TS --> PI["PyInstaller<br/>DeskMate.exe + _internal"]
     PI --> CK["DeskMate.exe --check"]
     CK --> IS[Inno Setup<br/>installer]

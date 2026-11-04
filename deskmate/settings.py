@@ -64,6 +64,8 @@ SCHEMA: dict[str, tuple[Any, Callable[[Any], bool]]] = {
     "update_announced": ("", lambda v: isinstance(v, str) and len(v) < 40),
     "last_update_check": (0.0, lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0),
     "remember": (True, _is_bool),
+    "setup_done": (False, _is_bool),  # the first-run setup was finished (or skipped)
+    "seen_version": ("", lambda v: isinstance(v, str) and len(v) < 40),  # for the "What's new" window
     "watch_minutes": (60, lambda v: v in (0, 30, 60, 120)),
     "watch_picture": (True, _is_bool),
     "watch_badge": (True, _is_bool),

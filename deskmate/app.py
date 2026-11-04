@@ -185,6 +185,8 @@ class Controller:
     MISSED_DELAY_MS = 6000  # mention missed reminders after her hello
     UPDATE_FIRST_MS = 20000  # first update check a little after start-up
     DIARY_FIRST_MS = 12000   # yesterday's diary line, a little after start-up
+    SETUP_MS = 2500          # first run: the setup window, right after her hello
+    WHATS_NEW_MS = 4000      # after an update: what's new, after her hello
 
     def __init__(self, app, settings, pack, frames, brain, idle):
         from PySide6.QtCore import QTimer
@@ -222,6 +224,9 @@ class Controller:
 
         self.memory = Memory(data_dir() / "memory.json")  # about you, so every character shares it
         self._memory_window = None
+        self._settings_window = None  # Settings, first-run setup and What's new windows (made when needed)
+        self._setup = None
+        self._whats_new = None
         self._diary_busy = False
         self.speaker = self._make_speaker()
         self._update = None  # a newer release, if GitHub has one
@@ -265,10 +270,21 @@ class Controller:
             self.companion.show()
             self.companion.settle()  # floating from an earlier session? she drops to the taskbar
         now = time.monotonic()
+        from PySide6.QtCore import QTimer
+
+        from . import __version__
+
         if first_run:
             self.brain.on_first_run(now)  # one-time hello with instructions
+            if not self.settings["setup_done"]:
+                QTimer.singleShot(self.SETUP_MS, self.start_setup)
         else:
             self.brain.on_start(now)
+            seen = self.settings["seen_version"]
+            # After an update (not on a brand-new install): what's new. ("" = updated from before 0.7.0.)
+            if seen != __version__ and (seen or self.settings["position"] is not None):
+                QTimer.singleShot(self.WHATS_NEW_MS, self._announce_update)
+        self._set("seen_version", __version__)
         self._tick_timer.start(self.TICK_MS)
         from PySide6.QtCore import QTimer
 
@@ -962,6 +978,52 @@ class Controller:
 
         QTimer.singleShot(HIDE_MS, later)
 
+    # ------------------------------------------------------- settings & welcome
+    def open_settings(self, tab: str = "") -> None:
+        """Menu: Settings... (one window with tabs)."""
+        from .settings_window import SettingsWindow
+
+        if self._settings_window is None:
+            self._settings_window = SettingsWindow(self)
+        if not self.companion.isVisible():
+            self.show_companion()
+        self._settings_window.refresh()
+        if tab:
+            self._settings_window.show_tab(tab)
+        self._settings_window.open_near(self._body_rect(), self.companion.available_rect())
+
+    def _settings_changed(self) -> None:
+        """Something changed outside the Settings window: show it there too."""
+        window = getattr(self, "_settings_window", None)
+        if window is not None and window.isVisible():
+            window.refresh()
+
+    def start_setup(self) -> None:
+        """First run (or Settings › About › Run setup again): the 'let's set me up' window."""
+        from .welcome import SetupWizard
+
+        if getattr(self, "_setup", None) is not None and self._setup.isVisible():
+            self._setup.raise_()
+            return
+        if not self.companion.isVisible():
+            self.show_companion()
+        self._setup = SetupWizard(self)
+        self._setup.open_near(self._body_rect(), self.companion.available_rect())
+
+    def show_whats_new(self) -> None:
+        from .welcome import WhatsNewWindow
+
+        if not self.companion.isVisible():
+            self.show_companion()
+        self._whats_new = WhatsNewWindow(self)
+        self._whats_new.open_near(self._body_rect(), self.companion.available_rect())
+
+    def _announce_update(self) -> None:
+        if getattr(self, "_closed", False):
+            return
+        self._event(lambda now: self.brain.say(now, "Ehehe~ I got an update! Look what's new~", "happy"))
+        self.show_whats_new()
+
     def open_chat_settings(self) -> bool:
         """Menu: the Chat settings dialog. Returns True if saved."""
         from .chat import KEY_NAMES, MODEL_SETTINGS, load_key, save_key
@@ -1015,12 +1077,10 @@ class Controller:
 
     # ------------------------------------------------------------------ menu
     def _build_menu(self):
-        from PySide6.QtGui import QAction, QActionGroup, QColor
+        from PySide6.QtGui import QAction, QColor
         from PySide6.QtWidgets import QMenu
 
-        from . import autostart
-        from .menu_style import Header, accent_of, icon, style_menu, switch_icon
-        from .settings import SIZES
+        from .menu_style import Header, accent_of, icon, style_menu
 
         theme, cache = self.pack.theme, data_dir() / "ui"
         accent = accent_of(theme)
@@ -1044,16 +1104,6 @@ class Controller:
             parent.addAction(act)
             return act
 
-        def toggle(text, slot, checked, parent):
-            act = QAction(text, parent)
-            act.setCheckable(True)
-            act.setChecked(checked)
-            act.setIcon(switch_icon(checked, accent))
-            act.toggled.connect(lambda on: act.setIcon(switch_icon(on, accent)))
-            act.toggled.connect(slot)
-            parent.addAction(act)
-            return act
-
         self.menu_header = Header(menu, self.icon.pixmap(96), name, accent, smooth=self.pack.meta.get("smooth", True))
         menu.addSeparator()
         self.act_update = action("Update available...", self.open_update_page, "sparkle")
@@ -1073,77 +1123,7 @@ class Controller:
 
         self.character_menu = submenu(menu, "Character", "person")
         self._fill_character_menu()
-        size_menu = submenu(menu, "Size", "size")
-        group = QActionGroup(size_menu)
-        group.setExclusive(True)
-        self._size_actions = {}
-        for key in SIZES:
-            act = QAction(key.title(), size_menu)
-            act.setCheckable(True)
-            act.setChecked(key == self.settings["size"])
-            act.triggered.connect(functools.partial(self._set_size, key))
-            group.addAction(act)
-            size_menu.addAction(act)
-            self._size_actions[key] = act
-        self._mark_choices(self._size_actions.values())
-
-        settings = self.settings_menu = submenu(menu, "Settings", "settings")
-        self.act_top = toggle("Always on top", self._set_on_top, self.settings["always_on_top"], settings)
-        self.act_chatty = toggle("Chit-chat now and then", self._set_chatty, self.settings["chatty"], settings)
-        self.act_remember = toggle("Remember me across days", self._set_remember, self.settings["remember"], settings)
-        self.act_watch_badge = toggle("Show the 👁 sign while she watches", lambda on: self._set("watch_badge", on),
-                                      self.settings["watch_badge"], settings)
-        self.act_gravity = toggle("Gravity (falls to the taskbar)", self._set_gravity, self.settings["gravity"],
-                                  settings)
-        self.act_wander = toggle("Wander around", self._set_wander, self.settings["wander"], settings)
-        from . import perch
-
-        self.act_perch = None
-        if perch.supported():
-            self.act_perch = toggle("Sit on windows", self._set_perch, self.settings["perch"], settings)
-        self.act_care = toggle("Care reminders (water, breaks, bedtime)", self._set_reminders,
-                               self.settings["reminders"], settings)
-        self.act_autostart = None
-        if autostart.supported():
-            self.act_autostart = toggle("Start with Windows", self._set_autostart, autostart.is_enabled(), settings)
-        voice_menu = submenu(settings, "Voice", "sparkle")
-        voice_group = QActionGroup(voice_menu)
-        voice_group.setExclusive(True)
-        self._voice_actions = {}
-        for key, label in (("off", "Off"), ("windows", "Windows voice (free)"), ("openai", self._natural_label())):
-            act = QAction(label, voice_menu)
-            act.setCheckable(True)
-            act.setChecked(self.settings["voice"] == key)
-            act.triggered.connect(functools.partial(self._set_voice, key))
-            voice_group.addAction(act)
-            voice_menu.addAction(act)
-            self._voice_actions[key] = act
-        self._mark_choices(self._voice_actions.values())
-        voice_menu.addSeparator()
-        voice_menu.addSeparator()
-        lines_group = QActionGroup(voice_menu)
-        lines_group.setExclusive(True)
-        self._voice_line_actions = {}
-        for key, label in (("all", "Say everything out loud"), ("chat", "Only say chat replies out loud")):
-            act = QAction(label, voice_menu)
-            act.setCheckable(True)
-            act.setChecked(self.settings["voice_lines"] == key)
-            act.triggered.connect(functools.partial(self._set_voice_lines, key))
-            lines_group.addAction(act)
-            voice_menu.addAction(act)
-            self._voice_line_actions[key] = act
-        self._mark_choices(self._voice_line_actions.values())
-        voice_menu.addSeparator()
-        self.act_voice_settings = action("Voice settings...", self.open_voice_settings, "settings", voice_menu)
-        settings.addSeparator()
-        action("Chat settings...", self.open_chat_settings, "key", settings)
-        action("Forget today's chat", self._forget_chat, "eraser", settings)
-        action("Move back to the corner", self.companion.reset_position, "corner", settings)
-        action("Open settings && logs folder", self._open_data_folder, "folder", settings)
-        settings.addSeparator()
-        self.act_update_check = toggle("Check for updates", self._set_update_check, self.settings["update_check"],
-                                       settings)
-        action("Check for updates now", lambda: self.check_for_updates(manual=True), "sparkle", settings)
+        self.act_settings = action("Settings...", self.open_settings, "settings")
         menu.addSeparator()
 
         self.act_toggle = action(f"Hide {name}", self.toggle_visible, "eye-off")
@@ -1221,7 +1201,7 @@ class Controller:
         self.stop_watching("switch")  # a new character asks for her own permission
         self._set("character", pack.id)
         self.chat = self._make_chat()
-        for attr in ("_chat_box", "_chat_log", "_memory_window"):
+        for attr in ("_chat_box", "_chat_log", "_memory_window", "_settings_window"):
             window = getattr(self, attr)
             if window is not None:
                 window.hide()
@@ -1230,8 +1210,6 @@ class Controller:
         self._event(self.brain.on_start)
 
     def _refresh_menu(self) -> None:
-        from . import autostart
-
         self._fill_character_menu()
         self._fill_reminders_menu()
         from PySide6.QtGui import QColor
@@ -1251,14 +1229,6 @@ class Controller:
         if count:
             status += f"  ·  {count} reminder{'s' if count > 1 else ''}"
         self.menu_header.set_text(self.pack.name, status)
-        self._mark_choices(self._size_actions.values())
-        if self.act_autostart is not None:
-            from .menu_style import switch_icon
-
-            self.act_autostart.blockSignals(True)
-            self.act_autostart.setChecked(autostart.is_enabled())
-            self.act_autostart.setIcon(switch_icon(self.act_autostart.isChecked(), self._accent))
-            self.act_autostart.blockSignals(False)
 
     def _show_menu(self, global_pos) -> None:
         self.menu.popup(global_pos)
@@ -1344,7 +1314,7 @@ class Controller:
         self.settings.save()
         self.speaker.stop()
         self.speaker = self._make_speaker()
-        self._voice_actions["openai"].setText(self._natural_label())
+        self._settings_changed()
         log.info("Voice settings saved (natural voice from %s)", dialog.chosen_source)
         if self.settings["voice"] != "off":
             self.speaker.say("Hehe, how do I sound now~?", "chat")
@@ -1355,7 +1325,7 @@ class Controller:
         self.speaker.stop()
         self.speaker.mode = mode
         self._refresh_voice_key()
-        self._mark_choices(self._voice_actions.values())
+        self._settings_changed()
         if mode == "openai" and not self.speaker.openai.own_server and not self.speaker.openai.config.api_key:
             self._event(lambda now: self.brain.say(now, "I need your OpenAI key for that voice... "
                                                         "add it in Settings, Chat settings~", "pouty"))
@@ -1367,7 +1337,7 @@ class Controller:
     def _set_voice_lines(self, which: str, _checked: bool = True) -> None:
         self._set("voice_lines", which)
         self.speaker.everything = which == "all"
-        self._mark_choices(self._voice_line_actions.values())
+        self._settings_changed()
 
     def _spoken_language(self) -> str:
         """The language her voice speaks, if she should say her lines in it ("" = just say the English)."""
@@ -1550,7 +1520,8 @@ class Controller:
         self.settings.save()
         self.bubble.dismiss()
         self.stop_watching("quit")
-        for window in (self._chat_box, self._chat_log, self._memory_window):
+        for window in (self._chat_box, self._chat_log, self._memory_window, getattr(self, "_settings_window", None),
+                       getattr(self, "_setup", None), getattr(self, "_whats_new", None)):
             if window is not None:
                 window.hide()
         try:

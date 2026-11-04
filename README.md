@@ -54,7 +54,7 @@ dozes off when you leave, pouts when you ignore her, and reminds you to drink wa
 
 Prefer no installer? Take **`DeskMate-x.y.z-portable.zip`**, unzip it anywhere and run `DeskMate.exe`.
 
-**Updates:** once a day she checks GitHub for a newer release (just a look at the public Releases page, nothing about you is sent). When there is one, she tells you once and her menu shows **Update to x.y.z...**, which opens the download page. Install the new version over the old one. (Settings › **Check for updates** turns this off.) Your settings, chat history and API key stay in `%APPDATA%\DeskMate`.
+**Updates:** once a day she checks GitHub for a newer release (just a look at the public Releases page, nothing about you is sent). When there is one, she tells you once and her menu shows **Update to x.y.z...**, which opens the download page. Install the new version over the old one. (Settings › About › **Check for updates** turns this off.) Your settings, chat history and API key stay in `%APPDATA%\DeskMate`.
 
 <details>
 <summary>Run it from the source code instead (to tinker with it)</summary>
@@ -65,7 +65,7 @@ Double-click **`run_deskmate.bat`**. The first time, it sets itself up (about 1�
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 140 self-tests
+run_deskmate.bat --test        # run the 141 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -92,11 +92,24 @@ python -m venv .venv
 | **Right-click** her (or the tray icon) | The menu ⬇️ |
 | Click the **tray icon** | Hide / show her |
 
-**Menu:** a glass card in her colours, with her face and mood at the top. Chat with Yuki · Today's chat · Talk to me · Take a walk · Go to sleep / Wake up · Reminders · Character · Size · **Settings** › (switches for Always on top, Chit-chat, Gravity, Wander around, Sit on windows, Care reminders, Start with Windows · Voice · Check for updates · Chat settings · Forget today's chat · Move back to the corner · Open settings & logs folder) · Hide · Quit
+**Menu:** a glass card in her colours, with her face and mood at the top: Chat with Yuki · Today's chat · Watch with me · What I remember about you · Talk to me · Take a walk · Go to sleep / Wake up · Reminders · Character · **Settings...** · Hide · Quit.
 
-<img src="docs/menu.png" alt="Her right-click menu: a dark glass card with her avatar, mood, icons and switches" width="520">
+**Settings** is one window with tabs, and every change works right away (no Save button):
 
-> Want her to stay exactly where you put her (say, mid-screen)? Settings › switch off **Gravity**.
+| Tab | What's in it |
+|---|---|
+| General | Size, always on top, gravity, wander, sit on windows, chit-chat, care reminders, start with Windows, move her back to the corner |
+| Chat | Which chat brain and model, Chat settings, Today's chat, Forget today's chat |
+| Voice | Off / Windows / Natural voice, say everything or only chat replies, Voice settings |
+| Buddy | Watch with me, show the 👁 sign |
+| Memory | Remember me across days, what she remembers |
+| About | Version, check for updates, what's new, run setup again, settings & logs folder |
+
+The very first time you start her, a short **setup** helps you pick a chat brain, a voice and buddy mode (every step can be skipped). After an update, a **What's new** window shows what changed.
+
+<img src="docs/menu.png" alt="Her right-click menu (a dark glass card with her face and mood) next to the Settings window with its tabs" width="720">
+
+> Want her to stay exactly where you put her (say, mid-screen)? Settings › General › switch off **Gravity**.
 
 ---
 
@@ -119,7 +132,7 @@ You can save both an OpenAI and an Anthropic key and switch between them; each i
 
 - Leave **Model** empty or click **Pick for me**: DeskMate asks which models your key can use and picks a quick, cheap one (a "mini" model on OpenAI, Haiku on Claude).
 - **Today's chat** (in her menu, or the 🕘 button on the chat box) opens a window with the whole conversation as bubbles, with times and any reminders she set. Keep chatting there if you like.
-- She remembers what you talked about **today** (even after a restart), and starts fresh tomorrow. Right-click → Settings › **Forget today's chat** to clear it.
+- She remembers what you talked about **today** (even after a restart), and starts fresh tomorrow. Settings › Chat › **Forget today's chat** clears it.
 - While you chat, she doesn't interrupt with reminders or wander off.
 - No key, no internet, out of credit? She tells you in her own words, and everything else keeps working.
 
@@ -143,7 +156,7 @@ Then just do your thing. When you settle on something new (a video, a song, a ga
 - **Tap to answer.** When she asks you something, little answer chips pop up by her bubble (*"Yes, I love it!"*, *"Just background"*). Tap one, or 💬 to type your own.
 
 - **Answer her** in chat ("yes I love it"): she knows what she was talking about. While she watches, every message you send includes what's on your screen right now, so you can also just ask *"what does this error mean?"*. For help, the chat window gets **steps**, a short **example**, or a **question back**.
-- A small, half see-through **👁** sits at the corner of her head while she watches. Point at it to see the time left, **click it** to stop (or **Stop** in the chat window, or the menu). It also stops by itself when the time is up. Settings › "Show the 👁 sign while she watches" hides it (the tray tooltip and her menu still tell you).
+- A small, half see-through **👁** sits at the corner of her head while she watches. Point at it to see the time left, **click it** to stop (or **Stop** in the chat window, or the menu). It also stops by itself when the time is up. Settings › Buddy › "Show the 👁 sign while she watches" hides it (the tray tooltip and her menu still tell you).
 - **Never:** incognito / InPrivate windows, password managers, banking or sign-in pages: no picture, no comment. She stays quiet during Teams / Zoom / Meet calls, while you're chatting, when you're away from the PC, and when she's asleep.
 - She doesn't repeat herself about the same thing, and there's a limit per hour.
 - Her picture is just the window you're using (not your other monitor). Pictures stay in memory and go only to your chat brain. Today's chat file keeps only the words. On Windows 10/11 her own windows are left out of her picture (just for that moment), so she sees what's behind her and doesn't flicker, and your own screenshots still show her.
@@ -163,11 +176,11 @@ So she can say things like *"YUI again? You really love her~"* or *"How did yest
 
 - She never keeps passwords, money or health details, or anything you call secret.
 - It's one file on your PC (`%APPDATA%\DeskMate\memory.json`), shared by all characters (it's about *you*). A few lines of it go along with your chat messages, so your chat brain sees them too.
-- **Forget everything** in that window wipes it all. Settings › **Remember me across days** switches it off.
+- **Forget everything** in that window wipes it all. Settings › Memory › **Remember me across days** switches it off.
 
 ### 🔊 Her voice
 
-Right-click → Settings › **Voice**:
+Right-click → **Settings...** › **Voice**:
 
 | | |
 |---|---|
@@ -175,12 +188,12 @@ Right-click → Settings › **Voice**:
 | **Windows voice (free)** | The speech engine built into Windows. Works offline, a little robotic |
 | **Natural voice (OpenAI)** | A soft, natural voice using your OpenAI key (a fraction of a cent per line). If it can't connect, the Windows voice takes over |
 
-She says **everything** out loud: chat replies, greetings, reminders, her little idle lines and buddy-mode comments (the bubble still shows the text). Prefer quiet? Pick **Only say chat replies out loud** in the same menu. Decorations like `~` and `*yawn*` aren't read out, and while you're in a Teams / Zoom / Meet call she only shows the text, so she never talks over your meeting.
+She says **everything** out loud: chat replies, greetings, reminders, her little idle lines and buddy-mode comments (the bubble still shows the text). Prefer quiet? Set **Says out loud** to **Only chat replies** on the same tab. Decorations like `~` and `*yawn*` aren't read out, and while you're in a Teams / Zoom / Meet call she only shows the text, so she never talks over your meeting.
 
-**Voice settings...** (in the same menu) lets you choose *which* voice, with a **Test** button for each:
+**Voice settings...** (on the same tab) lets you choose *which* voice, with a **Test** button for each:
 
 - **Windows voice:** any voice installed on Windows, by name (e.g. *Microsoft Haruka Desktop* for Japanese). Installing a language's speech pack adds some; the free [NaturalVoiceSAPIAdapter](https://github.com/gexgd0419/NaturalVoiceSAPIAdapter) makes Windows 11's natural voices show up too (it's a clever hack, so a Windows update may break it).
-- **Natural voice from your own server (free, offline):** run [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) on your PC (`docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu:latest`, or its `start-cpu.ps1` without Docker), choose **My own server**, keep `http://localhost:8880/v1`, click **Load voices**. Kokoro has dozens of voices, and you can mix them (`af_bella+af_sky`). The first letter is the language, the second is female/male: `af_`/`am_` American English, `bf_`/`bm_` British English, `jf_` Japanese, `zf_` Chinese, `ef_` Spanish, `ff_` French, `hf_` Hindi, `if_` Italian, `pf_` Portuguese. **Japanese (or other) voice, English chat:** with a non-English voice, she *says* her lines in that voice's language while the bubble and chat stay English ("Welcome back~" on screen, 「おかえり～」 out loud). Her chat brain writes the spoken version together with each reply (no extra cost), and translates her fixed lines (greetings, reminders…) once and remembers them. This works for Japanese Windows voices too (like *Microsoft Haruka*). Untick **Say her lines in the voice's language** in Voice settings to turn it off. No key, nothing leaves your PC. Any server that speaks OpenAI's `/audio/speech` works the same way.
+- **Natural voice from your own server (free, offline):** run [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) on your PC (`docker run -d --name kokoro --restart unless-stopped -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu:latest` runs it in the background and starts it again with Docker; or its `start-cpu.ps1` without Docker), choose **My own server**, keep `http://localhost:8880/v1`, click **Load voices**. Kokoro has dozens of voices, and you can mix them (`af_bella+af_sky`). The first letter is the language, the second is female/male: `af_`/`am_` American English, `bf_`/`bm_` British English, `jf_` Japanese, `zf_` Chinese, `ef_` Spanish, `ff_` French, `hf_` Hindi, `if_` Italian, `pf_` Portuguese. **Japanese (or other) voice, English chat:** with a non-English voice, she *says* her lines in that voice's language while the bubble and chat stay English ("Welcome back~" on screen, 「おかえり～」 out loud). Her chat brain writes the spoken version together with each reply (no extra cost), and translates her fixed lines (greetings, reminders…) once and remembers them. This works for Japanese Windows voices too (like *Microsoft Haruka*). Untick **Say her lines in the voice's language** in Voice settings to turn it off. No key, nothing leaves your PC. Any server that speaks OpenAI's `/audio/speech` works the same way.
 - If the Natural voice can't be reached, she falls back to the Windows voice.
 
 > [!NOTE]
@@ -277,11 +290,11 @@ For front-facing poses where her arms go above her head (waving, stretching), ad
 | Problem | Fix |
 |---|---|
 | Nothing appears | Run `run_deskmate.bat --console` and read the message. |
-| She's lost somewhere | Right-click the tray icon → Settings › **Move back to the corner**. |
-| She won't stay where I put her | Settings › switch off **Gravity** (and **Wander around** if she walks off). |
-| Weird behaviour | Right-click → Settings › **Open settings & logs folder** → `deskmate.log`. |
+| She's lost somewhere | Right-click the tray icon → **Settings...** › General › **Move her back to the corner**. |
+| She won't stay where I put her | Settings › General › switch off **Gravity** (and **Wander around** if she walks off). |
+| Weird behaviour | Settings › About › **Open settings & logs folder** → `deskmate.log`. |
 | Start fresh | Quit her, delete `settings.json` in that folder. |
-| Chat says the key doesn't work | Right-click → Settings › **Chat settings** → paste the key again → **Test connection**. |
+| Chat says the key doesn't work | Settings › Chat › **Chat settings...** → paste the key again → **Test connection**. |
 
 Settings and logs live in `%APPDATA%\DeskMate`.
 
@@ -301,6 +314,9 @@ deskmate/
 ├── activity.py         buddy mode's eyes: which app / tab you're on, and when a comment is due
 ├── memory.py           she remembers you: facts, a diary of your days, your habits
 ├── menu_style.py       her glass right-click menu (icons and switches drawn in code)
+├── glass.py            the glass-window look shared by Settings, Setup and What's new
+├── settings_window.py  the Settings window (tabs; changes apply right away)
+├── welcome.py          first-run setup and the What's new window
 ├── character.py        loads + checks character packs
 ├── settings.py         settings with safe saves
 ├── single_instance.py  only one DeskMate at a time
@@ -316,7 +332,7 @@ tools/make_blink.py          makes a blink picture from idle + sleep
 tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
-tests/                       140 tests (python -m unittest)
+tests/                       141 tests (python -m unittest)
 packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno Setup)
 .github/workflows/           tests on every push; a tagged push builds and publishes a release
 ```

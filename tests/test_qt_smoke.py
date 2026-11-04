@@ -543,9 +543,13 @@ class QtSmokeTests(unittest.TestCase):
             spin(0.2)
             windows.speak.assert_not_called()  # voice is off until you switch it on
 
-            labels = [a.text() for a in controller._voice_actions.values()]
-            self.assertEqual(labels, ["Off", "Windows voice (free)", "Natural voice (OpenAI)"])
-            controller._voice_actions["windows"].trigger()
+            controller.open_settings("voice")  # everything voice is in Settings › Voice
+            window = controller._settings_window
+            self.assertTrue(window.isVisible())
+            labels = [window.voice.itemText(i) for i in range(window.voice.count())]
+            self.assertEqual(labels, ["Off", "Windows voice (free)", "Natural voice"])
+            window.voice.setCurrentIndex(window.voice.findData("windows"))
+            window.voice.activated.emit(window.voice.currentIndex())
             self.assertEqual(settings["voice"], "windows")
             windows.speak.assert_called_once_with("Can you hear me now?")  # a quick sample
 
@@ -554,11 +558,13 @@ class QtSmokeTests(unittest.TestCase):
             calls = windows.speak.call_count
             controller._event(lambda now: brain.say(now, "Good morning~"))  # her ordinary lines are said too...
             self.assertEqual(windows.speak.call_count, calls + 1)
-            controller._voice_line_actions["chat"].trigger()  # ...unless you only want chat replies
+            window.voice_lines.setCurrentIndex(window.voice_lines.findData("chat"))  # ...unless you only want chat
+            window.voice_lines.activated.emit(window.voice_lines.currentIndex())
             self.assertEqual(settings["voice_lines"], "chat")
             controller._event(lambda now: brain.say(now, "Water time!"))
             self.assertEqual(windows.speak.call_count, calls + 1)
-            controller._voice_line_actions["all"].trigger()
+            controller._set_voice_lines("all")
+            self.assertEqual(window.voice_lines.currentData(), "all")  # the window follows along
 
             # In a call: the bubble shows her line, but she doesn't talk over your meeting.
             from deskmate.activity import Activity
@@ -605,7 +611,7 @@ class QtSmokeTests(unittest.TestCase):
             controller.take_walk()  # the app's own little lines have a voice too
             windows.speak.assert_called_with("Turn on Gravity first I need a floor to walk on!")
 
-            controller._voice_actions["openai"].trigger()  # no key saved: she asks for one instead
+            controller._set_voice("openai")  # no key saved: she asks for one instead
             self.assertIn("key", controller.bubble.text)
 
             # Voice settings: any Windows voice by name, and the Natural voice from your own server.
@@ -670,10 +676,10 @@ class QtSmokeTests(unittest.TestCase):
                              ("Microsoft Haruka Desktop", "local", "jf_alpha"))
             self.assertEqual(controller.speaker.windows.name, "Microsoft Haruka Desktop")
             self.assertTrue(controller.speaker.openai.own_server)
-            self.assertEqual(controller._voice_actions["openai"].text(), "Natural voice (your own server)")
+            self.assertIn("your own server", controller._settings_window.voice_info.text())
             controller.speaker.windows = windows
             controller.bubble.dismiss()
-            controller._voice_actions["openai"].trigger()  # your own server needs no key: no complaint
+            controller._set_voice("openai")  # your own server needs no key: no complaint
             self.assertFalse(controller.bubble.isVisible())
             controller._on_about_to_quit()
             self.assertEqual(settings["tts_model"], "")  # Kokoro's model isn't kept as the OpenAI one
@@ -818,11 +824,14 @@ class QtSmokeTests(unittest.TestCase):
             watch.badge.enterEvent(None)
             self.assertEqual(watch.badge.windowOpacity(), 1.0)  # ...until the mouse is on it
             watch.badge.leaveEvent(None)
-            controller.act_watch_badge.trigger()  # can be hidden altogether
+            controller.open_settings("buddy")
+            badge_switch = controller._settings_window._switches["watch_badge"]
+            badge_switch.click()  # can be hidden altogether (Settings › Buddy)
             watch.polled = -1e9
             controller._tick()
             self.assertFalse(watch.badge.isVisible())
-            controller.act_watch_badge.trigger()
+            badge_switch.click()
+            controller._settings_window.close()
             controller._tick()
             self.assertTrue(watch.badge.isVisible())
 
@@ -1068,7 +1077,9 @@ class QtSmokeTests(unittest.TestCase):
             self.assertNotIn("facts", [r[0] for r in window.rows()])
 
             # Switched off: nothing about you goes into her prompt.
-            controller.act_remember.trigger()
+            controller.open_settings("memory")
+            controller._settings_window._switches["remember"].click()
+            controller._settings_window.close()
             self.assertFalse(settings["remember"])
             log.edit.setText("hi")
             log.edit.returnPressed.emit()
@@ -1078,6 +1089,119 @@ class QtSmokeTests(unittest.TestCase):
             self.assertNotIn("perch bug", fake.requests[-1]["messages"][0]["content"])
             window.hide()
             log.hide()
+            controller._on_about_to_quit()
+            controller.companion.close()
+
+    def test_settings_window_setup_and_whats_new(self):
+        import random
+        from unittest import mock
+
+        from PySide6.QtWidgets import QDialog
+
+        from deskmate import __version__
+        from deskmate.app import Controller
+        from deskmate.brain import Brain
+        from deskmate.character import load_pack
+        from deskmate.companion import load_frames
+        from deskmate.look import WatchDialog
+        from deskmate.settings import Settings
+        from deskmate.welcome import WHATS_NEW
+
+        self.assertIn(__version__, WHATS_NEW)  # every release says what's new
+        with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
+            settings = Settings(Path(home) / "settings.json")
+            settings["perch"] = False  # never sit on the test machine's real windows
+            settings["update_check"] = False  # no real GitHub calls in tests
+            settings["position"] = [300, 300]  # she has been here before...
+            settings["seen_version"] = "0.6.0"  # ...on an older version
+            pack = load_pack(self.root)
+            brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5), wallclock=noon)
+            controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
+            with mock.patch("PySide6.QtCore.QTimer.singleShot") as later:
+                controller.start()
+            self.assertIn(controller._announce_update, [call.args[1] for call in later.call_args_list])
+            self.assertEqual(settings["seen_version"], __version__)  # only once per version
+            controller._announce_update()
+            news = controller._whats_new
+            self.assertTrue(news.isVisible())
+            self.assertEqual(news.title.text(), f"What's new in {__version__}")
+            self.assertIn("update", controller.bubble.text)
+
+            # Her menu is short now: the everyday things, and one Settings... item.
+            labels = [a.text() for a in controller.menu.actions() if a.text()]
+            self.assertIn("Settings...", labels)
+            self.assertNotIn("Size", labels)
+            self.assertNotIn("Settings", labels)  # (the old submenu)
+
+            # Settings: tabs, switches that work right away, and info that follows along.
+            news._settings()  # "Open Settings" from What's new
+            window = controller._settings_window
+            self.assertTrue(window.isVisible())
+            self.assertFalse(news.isVisible())
+            tabs = [window.tabs.item(i).text() for i in range(window.tabs.count())]
+            self.assertEqual(tabs, ["General", "Chat", "Voice", "Buddy", "Memory", "About"])
+            gravity = window._switches["gravity"]
+            self.assertEqual(gravity.isChecked(), settings["gravity"])
+            gravity.click()
+            self.assertEqual(settings["gravity"], gravity.isChecked())
+            self.assertEqual(controller.companion.gravity, gravity.isChecked())
+            window.size.setCurrentIndex(window.size.findData("small"))
+            window.size.activated.emit(window.size.currentIndex())
+            self.assertEqual(settings["size"], "small")
+            self.assertIn("OpenAI", window.chat_info.text())
+            self.assertIn("No key yet", window.chat_info.text())
+            self.assertIn("Nothing yet", window.memory_info.text())
+            controller.memory.remember("Likes tea", __import__("datetime").date.today())
+            window.refresh()
+            self.assertIn("1 thing about you", window.memory_info.text())
+            window.show_tab("about")
+            self.assertEqual(window.pages.currentIndex(), 5)
+            window.close()
+
+            # Setup: choose a voice, try buddy mode (you can say no), finish.
+            windows = mock.MagicMock()
+            windows.available.return_value = True
+            controller.start_setup()
+            setup = controller._setup
+            self.assertTrue(setup.isVisible())
+            self.assertEqual(setup.step, "hello")
+            setup.next.click()
+            self.assertEqual(setup.step, "chat")
+            setup.chat_choices.buttons["skip"].click()  # "Not now"
+            self.assertEqual(setup.step, "voice")
+            setup.voice_choices.buttons["windows"].click()
+            self.assertEqual(settings["voice"], "windows")
+            controller.speaker.windows = windows
+            setup.voice_test.click()
+            windows.speak.assert_called()
+            setup.next.click()
+            self.assertEqual(setup.step, "buddy")
+            controller.chat.config.api_key = "sk-test-only"  # (no key would open Chat settings first)
+            with mock.patch.object(WatchDialog, "exec", return_value=QDialog.DialogCode.Rejected):
+                setup._try_buddy()
+            self.assertIsNone(controller.watch)
+            setup.next.click()
+            self.assertEqual((setup.step, setup.next.text()), ("done", "Done"))
+            setup.next.click()
+            self.assertFalse(setup.isVisible())
+            self.assertTrue(settings["setup_done"])
+            self.assertIn("All set", controller.bubble.text)
+            controller._on_about_to_quit()
+            controller.companion.close()
+
+        # A brand-new install gets the setup (not "what's new").
+        with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
+            settings = Settings(Path(home) / "settings.json")
+            settings["perch"] = False
+            settings["update_check"] = False
+            pack = load_pack(self.root)
+            brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5), wallclock=noon)
+            controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
+            with mock.patch("PySide6.QtCore.QTimer.singleShot") as later:
+                controller.start(first_run=True)
+            scheduled = [call.args[1] for call in later.call_args_list]
+            self.assertIn(controller.start_setup, scheduled)
+            self.assertNotIn(controller._announce_update, scheduled)
             controller._on_about_to_quit()
             controller.companion.close()
 
