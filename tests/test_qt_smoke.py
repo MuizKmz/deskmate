@@ -430,6 +430,28 @@ class QtSmokeTests(unittest.TestCase):
         self.assertFalse(bubble.isVisible())
         companion.close()
 
+    def test_bubble_stays_while_she_is_still_talking(self):
+        from deskmate.bubble import SpeechBubble
+
+        companion = self.make_companion()
+        bubble = SpeechBubble({"accent": "#C9A0DC"})
+        bubble.LINGER = 0.2
+        talking = [True]
+        bubble.keep_while = lambda: talking[0]
+        bubble.say("Hi~", 0.1, companion.head_rect_global(), companion.available_rect())
+        spin(0.6)
+        self.assertTrue(bubble.isVisible())  # its time is up, but her voice is still going
+        talking[0] = False
+        spin(0.1)
+        self.assertTrue(bubble.isVisible())  # a short moment after she finishes...
+        spin(0.6)
+        self.assertFalse(bubble.isVisible())  # ...then it goes
+        bubble.keep_while = lambda: False
+        bubble.say("Quiet line", 0.1, companion.head_rect_global(), companion.available_rect())
+        spin(0.6)
+        self.assertFalse(bubble.isVisible())  # no voice: its normal time
+        companion.close()
+
     def test_chat_from_the_menu_shows_her_reply(self):
         import random
         from unittest import mock

@@ -252,6 +252,8 @@ What decides *when* it's open is a small object, `voice.Mouth`, one per line she
 | Speaking with the Windows voice | There's no audio to look at (Windows plays it), so a random-but-natural rhythm of syllables (open 80–170 ms, closed 50–110 ms) runs for as long as the PowerShell is still talking, after a 0.6 s head start for it to begin |
 | Not speaking (voice off) | The same rhythm, for as long as the bubble is typing the words |
 
+**Words and voice end together.** The bubble used to have a fixed time (typing time + a few seconds), but a natural voice first has to be made (and maybe translated), then plays for as long as the clip lasts, so the words often vanished while she was still talking. Now `Speaker.talking()` says whether she's still on her line: from the moment she gets it ("loading"), until her `Mouth` says "done". When the bubble's time is up, it asks `keep_while()` (which is `speaker.talking`) and, while that's true, checks again every 150 ms; once she's finished it stays 1.2 s more, then fades. Limits keep it honest: a voice that takes over 30 s to arrive isn't waited for, and the bubble never stays more than a minute past its normal time.
+
 The window asks `mouth.state(now)` ("open", "closed" or "done") whenever it draws the talk frames, so the frame isn't picked by a clock like other animations, but by her voice. Only her plain faces (idle, talk) switch to talking. A blush or a pout stays, because the mood matters more than the mouth.
 
 ### Gravity in four lines
@@ -429,6 +431,8 @@ The pack speaks the same `/audio/speech` protocol, so `PackVoice` is just `OpenA
 - **It can't be left behind.** DeskMate stops it when she quits, and the pack is also given DeskMate's process id (`--parent`) and checks every two seconds that DeskMate is still there. If DeskMate crashes, the pack quits by itself instead of lingering in Task Manager.
 - **Downloads are checked.** The zip is streamed with a progress bar (a Qt signal carries the numbers from the download thread to the window), its size must match, nothing in it may write outside its folder ("zip slip"), and it must contain the voice model, before it replaces an old pack.
 
+**Windows said no.** On the first real try, Windows refused to start `DeskMate-Voice.exe`: *"An Application Control policy has blocked this file"* (error 4551). Smart App Control and company app policies only let *signed* programs from known publishers run, and a brand-new unsigned exe has no reputation at all. Two answers: when DeskMate runs from source and `kokoro-onnx` is installed, `command()` now starts the pack with the same Python that runs DeskMate (already trusted) instead of the exe; and the error is turned into a message that says what happened and what to do. The real fix for everyone is code signing (free for open-source projects through SignPath Foundation).
+
 One surprise: espeak-ng reads Japanese *kana* fine, but reads every kanji as "Chinese letter". So when the pack is her voice, `spoken_prompt(..., kana_only=True)` asks her brain to write the spoken line in hiragana and katakana only, and the server drops any kanji that slip through.
 
 The pack is built and published by its own workflow (`.github/workflows/voicepack.yml`): build the exe, download the model and check its SHA-256, copy every license, **start it and make it say an English and a Japanese line**, then zip it as the `voicepack-v1` release (never marked "Latest", so the update check ignores it).
@@ -559,7 +563,7 @@ Running from source needs Python. Real users want a download that just works. Th
 ```mermaid
 flowchart LR
     T["git push origin v0.3.0"] --> GA[GitHub Actions<br/>Windows machine]
-    GA --> TS[Run the 156 tests]
+    GA --> TS[Run the 159 tests]
     TS --> PI["PyInstaller<br/>DeskMate.exe + _internal"]
     PI --> CK["DeskMate.exe --check"]
     CK --> IS[Inno Setup<br/>installer]

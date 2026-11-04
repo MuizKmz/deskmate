@@ -203,6 +203,7 @@ class Controller:
         self.companion = Companion(pack, frames, size=settings["size"], on_top=settings["always_on_top"],
                                    gravity=settings["gravity"])
         self.bubble = SpeechBubble(pack.theme)
+        self.bubble.keep_while = lambda: self.speaker.talking()  # the words stay while she's still saying them
         self.bubble.set_on_top(settings["always_on_top"])
         self._tooltip = ""
         self._walk_after_landing = False

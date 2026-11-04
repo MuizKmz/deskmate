@@ -146,15 +146,34 @@ class VoicePackTests(unittest.TestCase):
             crashes.ensure_running(timeout=20)
         self.assertEqual(caught.exception.kind, "failed")
 
-    def test_command_prefers_the_exe(self):
+    def test_command(self):
+        from unittest import mock
+
         for name in MODEL_FILES:
             (self.folder / "models").mkdir(exist_ok=True)
             (self.folder / "models" / name).write_bytes(b"model")
         (self.folder / EXE).write_bytes(b"exe")
-        args = voicepack.command(self.folder, 4321, 99)
+        with mock.patch.object(voicepack, "source_engine_available", return_value=False):
+            args = voicepack.command(self.folder, 4321, 99)  # the installed app: the pack's own exe
         self.assertEqual(args[0], str(self.folder / EXE))
         self.assertEqual(args[args.index("--port") + 1], "4321")
         self.assertEqual(args[args.index("--parent") + 1], "99")
+        with mock.patch.object(voicepack, "source_engine_available", return_value=True):
+            args = voicepack.command(self.folder, 4321, 99)  # from source: the same Python runs it
+        self.assertEqual(args[:2], [sys.executable, "-c"])
+        self.assertIn("deskmate_voice.server", args[2])
+
+    def test_blocked_by_windows(self):
+        def blocked(*args, **kwargs):
+            error = OSError("An Application Control policy has blocked this file")
+            error.winerror = 4551
+            raise error
+
+        pack = VoicePack(self.folder, popen=blocked, make_command=lambda *a: ["DeskMate-Voice.exe"])
+        with self.assertRaises(VoicePackError) as caught:
+            pack.ensure_running()
+        self.assertEqual(caught.exception.kind, "blocked")
+        self.assertIn("pip install kokoro-onnx", str(caught.exception))
 
 
 class _FakeEngine:

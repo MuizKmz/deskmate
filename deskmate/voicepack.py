@@ -34,6 +34,12 @@ PACK_MB = 170  # roughly, for the "Download (~170 MB)" button
 EXE = "DeskMate-Voice.exe"
 MODEL_FILES = ("kokoro-v1.0.int8.onnx", "voices-v1.0.bin")
 START_TIMEOUT = 60.0  # the first start loads the model (a few seconds; slower PCs, a bit more)
+ROOT = Path(__file__).resolve().parents[1]  # (running from source: where deskmate_voice is)
+# Windows refusing to start a program: Smart App Control / a company's app policy (4551, 1260), antivirus (225).
+BLOCKED = {4551, 1260, 225}
+BLOCKED_TEXT = ("Windows blocked the voice pack (Smart App Control or your company's app policy), because it "
+                "isn't code-signed yet. If you run DeskMate from source, it can use Python instead: run "
+                "'.venv\\Scripts\\pip install kokoro-onnx' in the DeskMate folder, then restart DeskMate.")
 
 
 class VoicePackError(Exception):
@@ -66,14 +72,16 @@ def installed(folder: Path) -> bool:
 
 
 def command(folder: Path, port: int, parent: int) -> list[str] | None:
-    """How to start the pack (the .exe, or from source when developing), or None if it isn't here."""
+    """How to start the pack, or None if it isn't here. Running DeskMate from source with kokoro-onnx
+    installed, the same (trusted, signed) Python runs it; otherwise the pack's own .exe."""
     args = ["--models", str(folder / "models"), "--port", str(port), "--parent", str(parent)]
     if not models_ready(folder):
         return None
+    if source_engine_available():
+        start = f"import sys; sys.path.insert(0, {str(ROOT)!r}); from deskmate_voice.server import main; main()"
+        return [sys.executable, "-c", start, *args]
     if (folder / EXE).is_file():
         return [str(folder / EXE), *args]
-    if source_engine_available():
-        return [sys.executable, "-m", "deskmate_voice", *args]
     return None
 
 
@@ -169,6 +177,8 @@ class VoicePack:
                 self._process = self._popen(args, stdout=log_file, stderr=log_file, stdin=subprocess.DEVNULL,
                                             creationflags=flags)
             except OSError as error:
+                if getattr(error, "winerror", None) in BLOCKED:
+                    raise VoicePackError("blocked", BLOCKED_TEXT) from None
                 raise VoicePackError("failed", f"The voice pack didn't start: {error}") from None
             finally:
                 if log_file is not subprocess.DEVNULL:

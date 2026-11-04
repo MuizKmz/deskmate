@@ -157,7 +157,7 @@ class SetupWizard(GlassWindow):
             ("off", "Quiet", "Text only."),
             ("windows", "Windows voice", "Free and offline, a little robotic."),
             ("openai", "Natural voice (OpenAI)", "Sounds real. Uses your OpenAI key."),
-            ("builtin", "Natural voice (free voice pack)", "Free and offline. A one-time download (~170 MB)."),
+            ("builtin", "Natural voice (free voice pack)", "Free and offline. A one-time download (~130 MB)."),
         ], self._choose_voice)
         column.addWidget(self.voice_choices)
         self.voice_status = self._status(column)

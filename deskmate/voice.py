@@ -446,6 +446,17 @@ class Speaker:
         self.translate = translate
         self.on_mouth = on_mouth  # told when her voice starts (with a Mouth to move her lips) or stops (None)
         self._turn = 0  # newer lines win over older, still-loading ones
+        self._loading = (0, 0.0)  # (turn, since when) of a line whose voice is still being made
+        self._voice: Mouth | None = None  # the line she's saying right now
+
+    LOADING_LIMIT = 30.0  # a voice that takes longer than this isn't waited for
+
+    def talking(self) -> bool:
+        """Is she still saying (or about to say) her current line? The bubble stays until she's done."""
+        turn, since = self._loading
+        if turn and turn == self._turn and time.monotonic() - since < self.LOADING_LIMIT:
+            return True
+        return self._voice is not None and self._voice.state() != "done"
 
     def wants(self, kind: str) -> bool:
         return self.mode != "off" and (self.everything or kind == "chat")
@@ -465,6 +476,7 @@ class Speaker:
         self.stop()
         self._turn += 1
         turn = self._turn
+        self._loading = (turn, time.monotonic())
         try:
             target = self.language()
         except Exception:
@@ -499,11 +511,13 @@ class Speaker:
 
     def _windows(self, spoken: str) -> bool:
         if not self.windows.available():
+            self._loading = (0, 0.0)
             return False
         try:
             self.windows.speak(spoken)
         except OSError:
             log.warning("Windows voice failed", exc_info=True)
+            self._loading = (0, 0.0)
             return False
         speaking = getattr(self.windows, "speaking", None)
         # PowerShell takes a moment to start talking; then the mouth moves until it's done.
@@ -512,6 +526,8 @@ class Speaker:
         return True
 
     def _mouth(self, mouth: "Mouth | None") -> None:
+        self._voice = mouth
+        self._loading = (0, 0.0)  # she has started (or stopped): nothing loading any more
         if self.on_mouth is not None:
             try:
                 self.on_mouth(mouth)

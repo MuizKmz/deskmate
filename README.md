@@ -65,7 +65,7 @@ Double-click **`run_deskmate.bat`**. The first time, it sets itself up (about 1�
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 156 self-tests
+run_deskmate.bat --test        # run the 159 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -188,12 +188,12 @@ Right-click → **Settings...** › **Voice**:
 | **Windows voice (free)** | The speech engine built into Windows. Works offline, a little robotic |
 | **Natural voice** | A soft, natural voice: the free **voice pack** (offline, one download), OpenAI (your key, a fraction of a cent per line), or your own server. If it can't speak, the Windows voice takes over |
 
-She says **everything** out loud: chat replies, greetings, reminders, her little idle lines and buddy-mode comments (the bubble still shows the text). Prefer quiet? Set **Says out loud** to **Only chat replies** on the same tab. Decorations like `~` and `*yawn*` aren't read out, and while you're in a Teams / Zoom / Meet call she only shows the text, so she never talks over your meeting.
+Her bubble stays up until she has finished saying the line (then a moment more), so the words and her voice end together. She says **everything** out loud: chat replies, greetings, reminders, her little idle lines and buddy-mode comments (the bubble still shows the text). Prefer quiet? Set **Says out loud** to **Only chat replies** on the same tab. Decorations like `~` and `*yawn*` aren't read out, and while you're in a Teams / Zoom / Meet call she only shows the text, so she never talks over your meeting.
 
 **Voice settings...** (on the same tab) lets you choose *which* voice, with a **Test** button for each:
 
 - **Windows voice:** any voice installed on Windows, by name (e.g. *Microsoft Haruka Desktop* for Japanese). Installing a language's speech pack adds some; the free [NaturalVoiceSAPIAdapter](https://github.com/gexgd0419/NaturalVoiceSAPIAdapter) makes Windows 11's natural voices show up too (it's a clever hack, so a Windows update may break it).
-- **Built-in voice pack (free, offline, no setup):** choose **Built-in voice pack** and press **Download** (about 170 MB, once). That's it: DeskMate starts the voice by itself when she speaks and stops it when she quits. No Docker, no terminal, nothing leaves your PC. It's [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (the same voices as below, `af_heart` by default, `jf_alpha` for Japanese) running as a small separate program, `DeskMate-Voice.exe`, in `%APPDATA%\DeskMate\voicepack`. Its Japanese reads kana only, so with a Japanese voice her brain writes the spoken line in hiragana/katakana.
+- **Built-in voice pack (free, offline, no setup):** choose **Built-in voice pack** and press **Download** (about 130 MB, once). That's it: DeskMate starts the voice by itself when she speaks and stops it when she quits. No Docker, no terminal, nothing leaves your PC. It's [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (the same voices as below, `af_heart` by default, `jf_alpha` for Japanese) running as a small separate program, `DeskMate-Voice.exe`, in `%APPDATA%\DeskMate\voicepack`. Its Japanese reads kana only, so with a Japanese voice her brain writes the spoken line in hiragana/katakana. **"An Application Control policy has blocked this file"?** Windows' Smart App Control (or a company PC's app policy) blocks programs that aren't code-signed yet, and the pack isn't. Running DeskMate from source, run `.venv\Scripts\pip install kokoro-onnx` in the DeskMate folder and restart: the pack then runs through your Python, which Windows already trusts.
 - **Natural voice from your own server (free, offline):** run [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) on your PC (`docker run -d --name kokoro --restart unless-stopped -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu:latest` runs it in the background and starts it again with Docker; or its `start-cpu.ps1` without Docker), choose **My own server**, keep `http://localhost:8880/v1`, click **Load voices**. Kokoro has dozens of voices, and you can mix them (`af_bella+af_sky`). The first letter is the language, the second is female/male: `af_`/`am_` American English, `bf_`/`bm_` British English, `jf_` Japanese, `zf_` Chinese, `ef_` Spanish, `ff_` French, `hf_` Hindi, `if_` Italian, `pf_` Portuguese. **Japanese (or other) voice, English chat:** with a non-English voice, she *says* her lines in that voice's language while the bubble and chat stay English ("Welcome back~" on screen, 「おかえり～」 out loud). Her chat brain writes the spoken version together with each reply (no extra cost), and translates her fixed lines (greetings, reminders…) once and remembers them. This works for Japanese Windows voices too (like *Microsoft Haruka*). Untick **Say her lines in the voice's language** in Voice settings to turn it off. No key, nothing leaves your PC. Any server that speaks OpenAI's `/audio/speech` works the same way.
 - If the Natural voice can't be reached, she falls back to the Windows voice.
 
@@ -336,7 +336,7 @@ tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
 deskmate_voice/              the voice pack's little server (Kokoro), built into DeskMate-Voice.exe
-tests/                       156 tests (python -m unittest)
+tests/                       159 tests (python -m unittest)
 packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno Setup) + voicepack.spec
 .github/workflows/           tests on every push; a tagged push builds and publishes a release
 ```

@@ -1,4 +1,5 @@
 import base64
+import time
 import unittest
 from unittest import mock
 
@@ -273,6 +274,35 @@ class SpeakerTests(unittest.TestCase):
         for work, done in waiting:  # both clips arrive now, in order
             done(True, work())
         natural.play.assert_called_once()  # only the newest line is spoken
+
+
+    def test_talking_lasts_from_the_line_until_her_voice_ends(self):
+        """The bubble asks this, so the words stay until she has finished saying them."""
+        import struct
+
+        waiting = []
+        windows, natural = mock.MagicMock(), mock.MagicMock()
+        speaker = V.Speaker(windows, natural, lambda work, done: waiting.append((work, done)), mode="openai")
+        self.assertFalse(speaker.talking())
+        speaker.say("A long line~", "chat")
+        self.assertTrue(speaker.talking())  # the clip is still being made: she's about to speak
+        rate = 24000
+        loud = b"".join(struct.pack("<h", 12000 if (i // 600) % 2 else -12000) for i in range(int(0.3 * rate)))
+        clip = struct.pack("<4sI4s4sIHHIIHH4sI", b"RIFF", 36 + len(loud), b"WAVE", b"fmt ", 16, 1, 1, rate,
+                           rate * 2, 2, 16, b"data", len(loud)) + loud  # 0.3 s of voice
+        natural.synthesize.return_value = clip
+        work, done = waiting.pop()
+        done(True, work())
+        self.assertTrue(speaker.talking())  # speaking now
+        time.sleep(0.4)
+        self.assertFalse(speaker.talking())  # the clip is over
+        speaker.say("Another", "chat")
+        speaker.stop()  # (stopped: nothing more to wait for)
+        self.assertFalse(speaker.talking())
+        windows.available.return_value = False
+        speaker = V.Speaker(windows, None, run_now, mode="windows")
+        speaker.say("No voice here", "chat")
+        self.assertFalse(speaker.talking())  # no voice at all: the bubble keeps its normal time
 
 
 if __name__ == "__main__":

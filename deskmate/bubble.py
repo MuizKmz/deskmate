@@ -9,6 +9,8 @@ and the not-yet-typed part is drawn invisible.
 from __future__ import annotations
 
 import math
+import time
+from typing import Callable
 
 from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import (
@@ -38,6 +40,8 @@ class SpeechBubble(QWidget):
     TAIL = 11
     MARGIN = 4  # room for the soft shadow
     TYPE_MS = 24  # milliseconds per typed character
+    LINGER = 1.2  # seconds the words stay after her voice has finished
+    HOLD_LIMIT = 60.0  # never wait for a voice longer than this past the normal time
 
     def __init__(self, theme: dict[str, str]):
         flags = (
@@ -79,7 +83,11 @@ class SpeechBubble(QWidget):
         self._type_timer.timeout.connect(self._type_step)
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
-        self._hide_timer.timeout.connect(self.fade_out)
+        self._hide_timer.timeout.connect(self._hide_due)
+        # While this says True (her voice is still saying the line), the bubble doesn't go away.
+        self.keep_while: Callable[[], bool] | None = None
+        self._held = False
+        self._hold_until = 0.0
         self._fade = QVariantAnimation(self)
         self._fade.setDuration(170)
         self._fade.valueChanged.connect(self._on_fade)
@@ -120,6 +128,8 @@ class SpeechBubble(QWidget):
         self._type_timer.start()
         typing_seconds = self._total * self.TYPE_MS / 1000.0
         self._hide_timer.start(int((duration + typing_seconds) * 1000))
+        self._held = False
+        self._hold_until = time.monotonic() + duration + typing_seconds + self.HOLD_LIMIT
         self.update()
 
     def reposition(self, anchor: QRect, available: QRect) -> None:
@@ -128,6 +138,22 @@ class SpeechBubble(QWidget):
         self._anchor, self._avail = QRect(anchor), QRect(available)
         self._place()
         self.update()
+
+    def _hide_due(self) -> None:
+        """Time's up: go, unless she's still saying it out loud (then stay until she's done, and a moment)."""
+        try:
+            talking = self.keep_while is not None and bool(self.keep_while())
+        except Exception:
+            talking = False
+        if talking and time.monotonic() < self._hold_until:
+            self._held = True
+            self._hide_timer.start(150)
+            return
+        if self._held:
+            self._held = False
+            self._hide_timer.start(int(self.LINGER * 1000))
+            return
+        self.fade_out()
 
     def fade_out(self) -> None:
         if not self.isVisible() or self._fading_out:
