@@ -421,9 +421,17 @@ flowchart LR
 | Not `private`, not `quiet` | Incognito, password managers, banking: never. Calls: stay quiet |
 | `hold()` while you chat | She doesn't talk over you |
 
-**3. Seeing without being seen.** She's always on top, so a plain screen picture would mostly show… her. `SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)` asks Windows to leave a window out of screen captures while still showing it to you. It's switched on for all her windows only while buddy mode is on, and off again afterwards, so *your* screenshots and recordings still show her. On older systems the app falls back to making her see-through for 250 ms while the picture is taken.
+**3. Seeing without being seen.** She's always on top, so a plain screen picture would mostly show… her. `SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)` asks Windows to leave a window out of screen captures while still showing it to you. The first version switched it on for the whole time she watched, and the first real test showed the catch: she vanished from the user's *own* screenshots too. Now `_capture()` switches it on, waits 120 ms (`EXCLUDE_MS`) for Windows to apply it, takes the picture, and switches it off again. So it's "invisible to cameras" for a fraction of a second, not for an hour. On older systems the app falls back to making her see-through for 250 ms while the picture is taken.
+
+**Photograph the right thing.** The first version took the screen under the *mouse*. In the first real test, the user opened YouTube Music and she talked about a different window that was still on screen. Now `foreground()` also reads the window's frame (`DwmGetWindowAttribute`, the same call perching uses), and `crop_to_window()` cuts the picture down to just that window, on whichever monitor it's on. It's sharper (fewer pixels wasted), cheaper, and more private: your other monitor never leaves the PC.
 
 **4. One line, or nothing.** `ChatSession.react()` sends the picture with `BUDDY_PROMPT`: say ONE short, specific line ("Ooh, lo-fi~ is this your study playlist?"), or reply exactly `[skip]` if there's nothing worth saying. Giving the model a way to stay quiet matters as much as telling it what to say. Without it, she'd comment on every spreadsheet. Her line is saved in today's chat (with what it was about), so when you answer "yes I love it", she knows what you mean.
+
+**Answers you can tap.** If her line is a question, the prompt asks her to add two answers you might give: `<replies>Yes, I love it!|Just background</replies>`. `extract_replies()` takes the tag out (like reminders), and `QuickReplies` shows them as chips by her bubble. Tapping one sends it through the normal chat path, so it's exactly as if you'd typed it. If she asks but forgets the tag, there's a plain *Yes! / Not really* fallback. Letting the model write the choices makes them fit the question, which fixed buttons never could.
+
+**Hearing the music.** A song in the background never becomes the foreground window, so `now_playing()` looks at *every* window's title: Spotify's is `Artist - Song` while playing (just `Spotify Premium` when paused), and a YouTube Music tab is `Song - YouTube Music`. There's a second `Watcher` for songs, with a bigger gap (`Watcher.for_music`), so she reacts to a few songs an hour, not every track. And `Activity.key` treats every YouTube Music / Spotify window title as the *same* app, so a new song doesn't also look like "you opened something new" to the first Watcher. Two watchers, one rule between them: after either one speaks, the other waits (`other.hold(now)`).
+
+**Late is wrong.** Her brain takes a few seconds. If you've switched to something else by the time she answers, her comment would look like it's about the *new* thing. So `_on_react` checks what you're on *now*, and drops the comment if it changed. It's only saved to today's chat (`remember_reaction`) once it's really shown.
 
 **Same picture, two shapes.** OpenAI/Ollama and Claude both take the picture inside your message, but in different shapes:
 
@@ -467,7 +475,7 @@ Running from source needs Python. Real users want a download that just works. Th
 ```mermaid
 flowchart LR
     T["git push origin v0.3.0"] --> GA[GitHub Actions<br/>Windows machine]
-    GA --> TS[Run the 121 tests]
+    GA --> TS[Run the 124 tests]
     TS --> PI["PyInstaller<br/>DeskMate.exe + _internal"]
     PI --> CK["DeskMate.exe --check"]
     CK --> IS[Inno Setup<br/>installer]

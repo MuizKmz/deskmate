@@ -198,16 +198,33 @@ class ServerTests(unittest.TestCase):
         self.assertIn("buddy", sent["messages"][0]["content"])
         self.assertIn("[skip]", sent["messages"][0]["content"])
         self.assertIn("lofi hip hop radio", sent["messages"][-1]["content"][0]["text"])
-        # It's part of today's chat, so you can answer her ("yes!") and she knows what about.
+        self.assertEqual(session.history, [])  # not saved until it's really shown...
+        session.remember_reaction("Chrome: lofi hip hop radio - YouTube", *said)
+        # ...then it's part of today's chat, so you can answer her ("yes!") and she knows what about.
         self.assertEqual(session.transcript()[-1]["about"], "Chrome: lofi hip hop radio - YouTube")
         self.assertEqual(len(session.transcript()), 1)  # her glance isn't shown as something you said
         self.fake.reply = "[happy] Yay, same~"
         session.ask("yes I love it")
         self.assertIn("lofi", self.fake.requests[-1]["messages"][1]["content"])
+        # She asks something: answers you could tap come along (taken out of her line).
+        self.fake.reply = "[happy] Ooh, is this your study playlist? <replies>Yes, I love it!|Just background</replies>"
+        self.assertEqual(session.react("Chrome: lofi - YouTube"), ("happy", "Ooh, is this your study playlist?"))
+        self.assertEqual(session.last_replies, ["Yes, I love it!", "Just background"])
+        self.fake.reply = "[happy] Ado now? Villain hits hard~"
+        session.react("Spotify: Ado - Villain", music=True)
+        self.assertEqual(session.last_replies, ["Yes!", "Not really"])  # a question, but no answers given
+        sent = self.fake.requests[-1]["messages"]
+        self.assertIn("a new song started playing", sent[0]["content"])
+        self.assertEqual(sent[-1]["content"], "(Now playing: Spotify: Ado - Villain)")
+        self.fake.reply = "[happy] Nice spreadsheet."
+        session.react("Excel: budget.xlsx")
+        self.assertEqual(session.last_replies, [])
+        self.assertEqual(C.extract_replies("Hi <replies>a|b|c|d</replies>"), ("Hi", ["a", "b", "c"]))
+        self.assertEqual(C.extract_replies("Hi <replies>Yes!|"), ("Hi", ["Yes!"]))  # cut off: still fine
         # Nothing worth saying: she stays quiet and nothing is added.
         self.fake.reply = "[skip]"
         self.assertIsNone(session.react("Excel: budget.xlsx"))
-        self.assertEqual(len(session.history), 4)
+        self.assertEqual(len(session.history), 4)  # only the remembered ones
         self.assertIsInstance(self.fake.requests[-1]["messages"][-1]["content"], str)  # no picture: text only
 
     def test_claude_looks_too(self):

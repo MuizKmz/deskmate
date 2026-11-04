@@ -218,7 +218,14 @@ question. Be specific to what you actually see (the song, the video, the game, t
 "[happy] Ooh, lo-fi beats~ is this your study playlist?" or "[surprised] Whoa, a red error! Want me to look?"
 Don't lecture, don't list things, don't offer help unless something is clearly wrong. Vary what you say.
 If there's nothing nice or useful to say, or it looks private (messages, email, banking, passwords, \
-personal photos), reply with exactly [skip] and nothing else. Never read out private details."""
+personal photos), reply with exactly [skip] and nothing else. Never read out private details.
+If your line asks them something, end it with two short answers they could tap, in their own voice \
+(under 25 characters each), like this: <replies>Yes, I love it!|Just background music</replies>"""
+
+MUSIC_PROMPT = """\
+This time it's about the music: a new song started playing (maybe in the background while they do something \
+else). React to the song or the artist like a friend who hears it too ("Ooh, Ado now? Villain hits hard~"). \
+You can't see the player, only the song title, so don't describe the screen."""
 
 
 @dataclass(frozen=True)
@@ -278,6 +285,18 @@ def parse_reply(text: str) -> tuple[str, str]:
 
 
 _DETAILS_SPLIT = re.compile(r"\n\s*-{3,}\s*\n")
+_REPLIES_TAG = re.compile(r"<replies>(.*?)(?:</replies>|$)", re.I | re.S)
+
+
+def extract_replies(text: str) -> tuple[str, list[str]]:
+    """Take ``<replies>Yes!|No</replies>`` out of a line: (text, up to 3 short answers you can tap)."""
+    found: list[str] = []
+    for match in _REPLIES_TAG.finditer(text or ""):
+        for answer in match.group(1).split("|"):
+            answer = re.sub(r"\s+", " ", answer).strip().strip('"')
+            if answer and len(answer) <= 40 and answer not in found:
+                found.append(answer)
+    return _REPLIES_TAG.sub("", text or "").strip(), found[:3]
 
 
 def clean_details(text: str) -> str:
@@ -330,6 +349,7 @@ class ChatSession:
     history: list[dict] = field(default_factory=list)
     last_reminders: list[tuple[str, str]] = field(default_factory=list, init=False, repr=False)
     last_details: str = field(default="", init=False, repr=False)
+    last_replies: list[str] = field(default_factory=list, init=False, repr=False)  # tap-to-answer chips
     _day: date | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -415,24 +435,36 @@ class ChatSession:
         self._save()
         return mood, reply
 
-    def react(self, activity: str, context: str = "", snapshot: Snapshot | None = None) -> tuple[str, str] | None:
-        """Buddy mode: one line about what you just opened, or None if she has nothing to say.
+    def react(self, activity: str, context: str = "", snapshot: Snapshot | None = None,
+              music: bool = False) -> tuple[str, str] | None:
+        """Buddy mode: one line about what you just opened (or the song that just started),
+        or None if she has nothing to say. Answers you could tap end up in ``last_replies``.
 
-        Blocking (run it on a thread). What she said is kept in today's chat, so you can answer her.
+        Blocking (run it on a thread). Nothing is saved yet: call :meth:`remember_reaction` once
+        it's really shown (it isn't if you've already moved on to something else).
         """
-        note = f"(I just switched to: {activity[:200]})"
-        raw = self._complete(self.messages(note, context, snapshot, BUDDY_PROMPT), snapshot is not None)
+        self.last_replies = []
+        note = _reaction_note(activity, music)
+        extra = BUDDY_PROMPT + ("\n" + MUSIC_PROMPT if music else "")
+        raw = self._complete(self.messages(note, context, snapshot, extra), snapshot is not None)
         if not raw.strip() or "[skip]" in raw.lower():
             return None
         raw, _ = extract_reminders(raw)
+        raw, replies = extract_replies(raw)
         mood, reply = parse_reply(_DETAILS_SPLIT.split(raw.strip(), maxsplit=1)[0])
         if reply in ("", "..."):
             return None
+        if not replies and "?" in reply:
+            replies = ["Yes!", "Not really"]  # she asked, but forgot to suggest answers
+        self.last_replies = replies
+        return mood, reply
+
+    def remember_reaction(self, activity: str, mood: str, reply: str, music: bool = False) -> None:
+        """Keep a buddy comment in today's chat, so when you answer her she knows what it was about."""
         now = datetime.now().strftime("%H:%M")
-        self.history += [{"role": "user", "content": note, "time": now, "peek": True},
+        self.history += [{"role": "user", "content": _reaction_note(activity, music), "time": now, "peek": True},
                          {"role": "assistant", "content": f"[{mood}] {reply}", "time": now, "about": activity[:200]}]
         self._save()
-        return mood, reply
 
     def transcript(self) -> list[dict]:
         """Today's chat for the chat log window: who, clean text, time, and any reminders she set."""
@@ -456,6 +488,10 @@ class ChatSession:
     def forget(self) -> None:
         self.history = []
         self._save()
+
+
+def _reaction_note(activity: str, music: bool) -> str:
+    return f"(Now playing: {activity[:200]})" if music else f"(I just switched to: {activity[:200]})"
 
 
 # ------------------------------------------------------------------- secrets

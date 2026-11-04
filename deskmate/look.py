@@ -4,8 +4,9 @@
   itself (or only which app and title), and how chatty may she be.
 * ``WatchBadge`` is a small 👀 pill beside her for as long as she watches. Click it to stop.
 * ``exclude_from_capture`` keeps her own windows out of the screen picture (Windows 10 2004+):
-  she sees what's *behind* her, and doesn't flicker. Turned off again when she stops watching,
-  so your own screenshots and recordings still show her.
+  she sees what's *behind* her, and doesn't flicker. It's switched on only for the moment she
+  takes her picture, so your own screenshots and recordings still show her.
+* ``QuickReplies``: when she asks you something, little answer chips appear by her bubble.
 * ``grab_screen`` + ``snapshot_from`` turn the screen into a small JPEG, kept in memory only.
 """
 
@@ -16,7 +17,8 @@ import sys
 from PySide6.QtCore import QBuffer, QIODevice, QPoint, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
+    QWidget,
 )
 
 from .chat import Snapshot
@@ -24,6 +26,8 @@ from .chat import Snapshot
 MAX_SIDE = 1568  # big enough to read code and small text, small enough to be quick and cheap
 JPEG_QUALITY = 85
 HIDE_MS = 250  # without capture exclusion: how long she stays invisible before the picture is taken
+EXCLUDE_MS = 120  # with it: how long Windows gets to apply it before the picture is taken
+REPLIES_SECONDS = 25  # the answer chips go away after this long
 WDA_NONE, WDA_EXCLUDEFROMCAPTURE = 0x0, 0x11
 
 DURATIONS = [(30, "30 minutes"), (60, "1 hour"), (120, "2 hours"), (0, "Until I stop it")]
@@ -51,6 +55,20 @@ def snapshot_from(image: QImage, max_side: int = MAX_SIDE) -> Snapshot:
 def grab_screen(screen) -> QImage:
     """A picture of one whole screen, in real pixels."""
     return screen.grabWindow(0).toImage()
+
+
+def crop_to_window(image: QImage, screen: QRect, window: QRect, smallest: int = 120) -> QImage:
+    """Cut a whole-screen picture down to one window (all in Qt's logical pixels; the picture has real ones).
+
+    A window that's tiny or mostly off this screen keeps the whole screen instead.
+    """
+    part = window.intersected(screen)
+    if part.width() < smallest or part.height() < smallest:
+        return image
+    scale_x, scale_y = image.width() / max(1, screen.width()), image.height() / max(1, screen.height())
+    box = QRect(round((part.x() - screen.x()) * scale_x), round((part.y() - screen.y()) * scale_y),
+                round(part.width() * scale_x), round(part.height() * scale_y))
+    return image.copy(box.intersected(image.rect()))
 
 
 def exclude_from_capture(widget: QWidget, on: bool) -> bool:
@@ -189,3 +207,73 @@ class WatchBadge(QWidget):
 def thumbnail(image: QImage, width: int = 240, height: int = 150) -> QPixmap:
     return QPixmap.fromImage(image.scaled(width, height, Qt.AspectRatioMode.KeepAspectRatio,
                                           Qt.TransformationMode.SmoothTransformation))
+
+
+# --------------------------------------------------------------- quick replies
+class QuickReplies(QWidget):
+    """A row of little answer chips next to her bubble, when she asks you something. Click one to answer."""
+
+    chosen = Signal(str)       # an answer was clicked: send it as your chat message
+    chat_requested = Signal()  # the 💬 chip: open the chat box to type your own answer
+
+    def __init__(self, accent: QColor):
+        flags = (Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint
+                 | Qt.WindowType.WindowDoesNotAcceptFocus)
+        super().__init__(None, flags)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self._accent = QColor(accent)
+        self._row = QHBoxLayout(self)
+        self._row.setContentsMargins(2, 2, 2, 2)
+        self._row.setSpacing(6)
+        a = self._accent
+        self._style = (f"QPushButton {{ color: #F4EEFA; background: rgba(24, 19, 34, 225); border-radius: 12px;"
+                       f" border: 1px solid rgba({a.red()}, {a.green()}, {a.blue()}, 200); padding: 4px 11px;"
+                       f" font-size: 9pt; }}"
+                       f" QPushButton:hover {{ background: rgba({a.red()}, {a.green()}, {a.blue()}, 120); }}")
+
+    def answers(self) -> list[str]:
+        return [b.text() for b in self.findChildren(QPushButton) if b.property("answer")]
+
+    def offer(self, answers: list[str], bubble: QRect, available: QRect) -> None:
+        """Show ``answers`` as chips just above her bubble (or below it, if there's no room)."""
+        while self._row.count():
+            widget = self._row.takeAt(0).widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        for answer in answers:
+            self._row.addWidget(self._chip(answer, answer=True))
+        self._row.addWidget(self._chip("💬", answer=False))
+        self.adjustSize()
+        x = bubble.center().x() - self.width() // 2
+        y = bubble.top() - self.height() - 2
+        if y < available.top():
+            y = bubble.bottom() + 4
+        x = max(available.left(), min(x, available.right() - self.width()))
+        self.move(QPoint(x, y))
+        self.show()
+        self.raise_()
+
+    def _chip(self, text: str, answer: bool) -> QPushButton:
+        chip = QPushButton(text)
+        chip.setCursor(Qt.CursorShape.PointingHandCursor)
+        chip.setStyleSheet(self._style)
+        chip.setProperty("answer", answer)
+        chip.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        chip.setFixedHeight(26)  # same height for all (Qt drops the rounding if a chip is shorter than 24 px)
+        if answer:
+            chip.clicked.connect(lambda _=False, t=text: self._pick(t))
+        else:
+            chip.setToolTip("Type your own answer")
+            chip.clicked.connect(self._chat)
+        return chip
+
+    def _pick(self, text: str) -> None:
+        self.hide()
+        self.chosen.emit(text)
+
+    def _chat(self) -> None:
+        self.hide()
+        self.chat_requested.emit()
+

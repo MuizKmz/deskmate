@@ -207,10 +207,11 @@ class Controller:
         self._chat_log = None
         self._chat_worker = None
         self.watch = None  # buddy mode: set while she watches your screen with you (see start_watching)
-        from .activity import foreground
+        from .activity import foreground, playing
         from .look import grab_screen
 
-        self._read_activity = foreground  # tests swap these two for pretend ones
+        self._read_activity = foreground  # tests swap these three for pretend ones
+        self._read_music = playing
         self._grab_screen = grab_screen
         self.chat = self._make_chat()
         from .reminders import ReminderBook
@@ -385,7 +386,6 @@ class Controller:
             self._chat_box.sent.connect(self._on_chat_sent)
             self._chat_box.history_requested.connect(self.open_chat_log)
             self._chat_box.look_requested.connect(self.toggle_watching)
-            self._protect(self._chat_box)
         self._chat_box.set_looking(self.watch is not None)
         if self._chat_worker is None:
             self._chat_worker = Background()
@@ -408,6 +408,8 @@ class Controller:
         now = time.monotonic()
         if watch is not None:
             watch.watcher.hold(now)  # you're talking: no buddy comments for a while
+            watch.music.hold(now)
+            watch.replies.hide()
         self.brain.on_chat_sent(now)
         self._apply(now)
         self.bubble.say("...", 60, self.companion.head_rect_global(), self.companion.available_rect())
@@ -427,7 +429,7 @@ class Controller:
             self._chat_worker.run(lambda: session.ask(text, context, snapshot), self._on_chat_reply)
 
         if with_picture:
-            self._capture(ask)
+            self._capture(ask, activity)
         else:
             ask(None)
 
@@ -572,7 +574,6 @@ class Controller:
             self._chat_log.sent.connect(self._on_chat_log_sent)
             self._chat_log.look_requested.connect(self.toggle_watching)
             self._chat_log.look_stopped.connect(self.stop_watching)
-            self._protect(self._chat_log)
         self._chat_log.set_watching(self.watch is not None, self.watch.left(time.monotonic()) if self.watch else "")
         if self._chat_worker is None:
             self._chat_worker = Background()
@@ -604,7 +605,7 @@ class Controller:
     def start_watching(self) -> bool:
         """Ask permission, then she watches what you do and reacts like a buddy."""
         from .activity import Watcher
-        from .look import WatchBadge, WatchDialog
+        from .look import QuickReplies, WatchBadge, WatchDialog, exclude_from_capture
 
         if self.watch is not None:
             return True
@@ -619,13 +620,19 @@ class Controller:
         now = time.monotonic()
         badge = WatchBadge(self.pack.name, self._accent)
         badge.clicked.connect(self.stop_watching)
+        replies = QuickReplies(self._accent)
+        replies.chosen.connect(self._on_chat_sent)
+        replies.chat_requested.connect(self.open_chat)
         self.watch = _Watch(until=now + dialog.minutes * 60 if dialog.minutes else None,
                             picture=dialog.with_picture, watcher=Watcher.with_chattiness(dialog.chattiness),
-                            badge=badge)
+                            music=Watcher.for_music(dialog.chattiness), badge=badge, replies=replies)
         self.watch.watcher.hold(now - self.watch.watcher.gap + 45)  # first comment after ~45 s at the earliest
-        self.watch.excluded = all([self._protect(w) for w in self._our_windows()])
-        log.info("Buddy mode on (%s, picture %s, %s; hidden from capture: %s)", dialog.minutes or "no limit",
-                 dialog.with_picture, dialog.chattiness, self.watch.excluded)
+        self.watch.music.hold(now - self.watch.music.gap + 90)
+        # Can Windows leave her out of a screen picture? (Checked once; used only while a picture is taken.)
+        self.watch.can_exclude = exclude_from_capture(self.companion, True) and exclude_from_capture(self.companion,
+                                                                                                    False)
+        log.info("Buddy mode on (%s, picture %s, %s; can hide from capture: %s)", dialog.minutes or "no limit",
+                 dialog.with_picture, dialog.chattiness, self.watch.can_exclude)
         self._show_watching(now)
         self._event(lambda t: self.brain.say(t, "Yay~ I'll keep you company! Just do your thing, "
                                                 "I'll say something if I see something fun.", "happy"))
@@ -637,10 +644,11 @@ class Controller:
         watch, self.watch = self.watch, None
         if watch is None:
             return
-        for window in self._our_windows() + [watch.badge]:
-            exclude_from_capture(window, False)  # your own screenshots / recordings show her again
-        watch.badge.hide()
-        watch.badge.deleteLater()
+        for window in self._our_windows() + [watch.badge, watch.replies]:
+            exclude_from_capture(window, False)  # (in case it stopped in the middle of a picture)
+        for window in (watch.badge, watch.replies):
+            window.hide()
+            window.deleteLater()
         self._show_watching(time.monotonic())
         log.info("Buddy mode off (%s)", reason)
         if reason == "manual":
@@ -652,14 +660,8 @@ class Controller:
     def _our_windows(self) -> list:
         windows = [self.companion, self.bubble, self._chat_box, self._chat_log]
         if self.watch is not None:
-            windows.append(self.watch.badge)
+            windows += [self.watch.badge, self.watch.replies]
         return [w for w in windows if w is not None]
-
-    def _protect(self, window) -> bool:
-        """While she watches: keep this window of ours out of her screen pictures."""
-        from .look import exclude_from_capture
-
-        return self.watch is not None and exclude_from_capture(window, True)
 
     def _show_watching(self, now: float) -> None:
         on = self.watch is not None
@@ -700,13 +702,19 @@ class Controller:
         watch.polled = now
         if self._chat_log is not None and self._chat_log.isVisible():
             self._chat_log.set_watching(True, watch.left(now))
+        if watch.replies.isVisible() and (not self.bubble.isVisible() or now > watch.replies_until):
+            watch.replies.hide()  # her question is gone: so are the answer chips
         activity = self._read_activity()
         target = watch.watcher.observe(now, activity)
+        song = watch.music.observe(now, self._read_music())
         busy = (watch.reacting or (self._chat_worker is not None and self._chat_worker.busy)
                 or now < getattr(self.brain, "_chatting_until", 0))
-        if target is None or busy or not visible or self.brain.asleep or self.idle.seconds() > self.AWAY_SECONDS:
+        if busy or not visible or self.brain.asleep or self.idle.seconds() > self.AWAY_SECONDS:
             return
-        self._react_to(target)
+        if target is not None:
+            self._react_to(target)
+        elif song is not None and not (activity is not None and activity.quiet):
+            self._react_to(song)
 
     def _react_to(self, activity) -> None:
         from datetime import datetime
@@ -722,15 +730,16 @@ class Controller:
         now = time.monotonic()
         context = situation(datetime.now(), self.brain.label(now), (now - self.brain._active_since) / 60.0)
         session = self.chat
-        log.info("Buddy mode: asking her about %s", activity.app)
+        music = activity.kind == "music"
+        log.info("Buddy mode: asking her about %s", "the song" if music else activity.app)
 
         def go(image) -> None:
             snapshot = snapshot_from(image, 1280) if image is not None else None
-            self._chat_worker.run(lambda: session.react(activity.describe(), context, snapshot),
+            self._chat_worker.run(lambda: session.react(activity.describe(), context, snapshot, music),
                                   lambda ok, value: self._on_react(activity, ok, value))
 
-        if watch.picture:
-            self._capture(go)
+        if watch.picture and not music:  # a song is just its title: no picture needed
+            self._capture(go, activity)
         else:
             go(None)
 
@@ -742,7 +751,16 @@ class Controller:
             return  # stopped while she was thinking
         watch.reacting = False
         now = time.monotonic()
-        watch.watcher.mentioned(now, activity, spoke=bool(ok and value))
+        music = activity.kind == "music"
+        watcher, other = (watch.music, watch.watcher) if music else (watch.watcher, watch.music)
+        current = self._read_music() if music else self._read_activity()
+        if ok and value and (current is None or current.key != activity.key):
+            # You've moved on while she was thinking: a comment about the old thing would sound
+            # like it's about the new one. Drop it (she'll get a chance to talk about the new one).
+            log.info("Buddy mode: dropped a late comment about %s", activity.app)
+            watcher.mentioned(now, activity, spoke=False)
+            return
+        watcher.mentioned(now, activity, spoke=bool(ok and value))
         if not ok:
             kind = value.kind if isinstance(value, ChatError) else "server"
             log.warning("Buddy comment failed (%s): %s", kind, getattr(value, "detail", value))
@@ -757,30 +775,63 @@ class Controller:
         if not value:
             return  # nothing worth saying: she stays quiet
         mood, reply = value
+        other.hold(now)  # one comment at a time: the song and the app don't both get one
+        self.chat.remember_reaction(activity.describe(), mood, reply, music)
         if self._chat_log is not None and self._chat_log.isVisible():
             self._chat_log.set_lines(self.chat.transcript())
         self.brain.on_chat_reply(now, mood, reply)
         self._apply(now)
+        if self.chat.last_replies and self.bubble.isVisible():
+            from .look import REPLIES_SECONDS
 
-    def _capture(self, then) -> None:
-        """Take a picture of the screen you're on (without her in it), then call ``then(image or None)``."""
-        from PySide6.QtCore import QTimer
+            watch.replies.offer(self.chat.last_replies, self.bubble.geometry(), self.companion.available_rect())
+            watch.replies_until = now + REPLIES_SECONDS
+
+    def _capture(self, then, activity=None) -> None:
+        """Take a picture of the window you're using (without her in it), then call ``then(image or None)``.
+
+        With the window's position (``activity.bounds``) it's the screen that window is on, cut to
+        the window: what you're looking at, not another monitor. Otherwise the screen under the mouse.
+        """
+        from PySide6.QtCore import QPoint, QRect, QTimer
         from PySide6.QtGui import QCursor, QGuiApplication
 
-        from .look import HIDE_MS
+        from .look import EXCLUDE_MS, HIDE_MS, crop_to_window, exclude_from_capture
+        from .perch import qt_to_logical
 
-        screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+        target = None  # the window you're using, in Qt's pixels
+        if activity is not None and activity.bounds:
+            to_logical = qt_to_logical()
+            left, top = to_logical(activity.bounds[0], activity.bounds[1])
+            right, bottom = to_logical(activity.bounds[2] - 1, activity.bounds[3] - 1)
+            target = QRect(QPoint(round(left), round(top)), QPoint(round(right), round(bottom)))
+        screen = ((QGuiApplication.screenAt(target.center()) if target is not None else None)
+                  or QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen())
 
         def grab():
             try:
                 image = self._grab_screen(screen)
-                return None if image is None or image.isNull() else image
+                if image is None or image.isNull():
+                    return None
+                return crop_to_window(image, screen.geometry(), target) if target is not None else image
             except Exception:
                 log.exception("Couldn't take a screen picture")
                 return None
 
-        if self.watch is not None and self.watch.excluded:
-            then(grab())  # Windows keeps her out of the picture: no need to hide
+        if self.watch is not None and self.watch.can_exclude:
+            # Windows leaves her out of screen pictures, but only for this moment: your own
+            # screenshots and recordings still show her.
+            ours = self._our_windows()
+            for window in ours:
+                exclude_from_capture(window, True)
+
+            def taken() -> None:
+                image = grab()
+                for window in ours:
+                    exclude_from_capture(window, False)
+                then(image)
+
+            QTimer.singleShot(EXCLUDE_MS, taken)
             return
         hidden = [w for w in self._our_windows() if w.isVisible()]
         for window in hidden:
@@ -1297,12 +1348,15 @@ class Controller:
 class _Watch:
     """Buddy mode's state while it's on."""
 
-    def __init__(self, until, picture: bool, watcher, badge):
+    def __init__(self, until, picture: bool, watcher, music, badge, replies):
         self.until = until          # time.monotonic() when it ends, or None (until you stop it)
         self.picture = picture      # may she see the screen itself, or only app names?
-        self.watcher = watcher      # activity.Watcher: decides when a comment is due
+        self.watcher = watcher      # activity.Watcher: decides when a comment about what you do is due
+        self.music = music          # ...and one for the songs that play
         self.badge = badge          # the 👀 pill beside her
-        self.excluded = False       # Windows keeps her windows out of screen pictures
+        self.replies = replies      # answer chips under her questions
+        self.replies_until = 0.0
+        self.can_exclude = False    # Windows can leave her out of a screen picture
         self.reacting = False       # waiting for her brain's comment
         self.polled = -1e9
 

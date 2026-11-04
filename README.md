@@ -64,7 +64,7 @@ Double-click **`run_deskmate.bat`**. The first time, it sets itself up (about 1�
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 121 self-tests
+run_deskmate.bat --test        # run the 124 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -137,11 +137,14 @@ Right-click her → **Watch with me...** (or the 👁 button in the chat windows
 
 Then just do your thing. When you settle on something new (a video, a song, a game, a file), she notices and says something like a friend next to you would: *"Ooh, lo-fi~ is this your study playlist?"*, *"Whoa, a red error! Want me to look?"* If there's nothing worth saying, she stays quiet.
 
+- **She hears your music.** Playing Spotify or YouTube Music, even in the background? Now and then, when a new song starts, she reacts to it: *"Ooh, Ado now? Villain hits hard~"* (Not every song: a few an hour at most.)
+- **Tap to answer.** When she asks you something, little answer chips pop up by her bubble (*"Yes, I love it!"*, *"Just background"*). Tap one, or 💬 to type your own.
+
 - **Answer her** in chat ("yes I love it"): she knows what she was talking about. While she watches, every message you send includes what's on your screen right now, so you can also just ask *"what does this error mean?"*. For help, the chat window gets **steps**, a short **example**, or a **question back**.
 - A **👀 watching** badge sits above her the whole time. **Click it** to stop (or **Stop** in the chat window, or the menu). It also stops by itself when the time is up.
 - **Never:** incognito / InPrivate windows, password managers, banking or sign-in pages: no picture, no comment. She stays quiet during Teams / Zoom / Meet calls, while you're chatting, when you're away from the PC, and when she's asleep.
 - She doesn't repeat herself about the same thing, and there's a limit per hour.
-- Pictures stay in memory and go only to your chat brain. Today's chat file keeps only the words. On Windows 10/11 her own windows are left out of the picture, so she sees what's behind her (and doesn't flicker).
+- Her picture is just the window you're using (not your other monitor). Pictures stay in memory and go only to your chat brain. Today's chat file keeps only the words. On Windows 10/11 her own windows are left out of her picture (just for that moment), so she sees what's behind her and doesn't flicker, and your own screenshots still show her.
 - Works with all three brains. On Ollama, use a model that can see pictures (`ollama pull llama3.2-vision`), or untick "see the screen".
 
 ### 🔊 Her voice
@@ -285,7 +288,7 @@ tools/make_blink.py          makes a blink picture from idle + sleep
 tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
-tests/                       121 tests (python -m unittest)
+tests/                       124 tests (python -m unittest)
 packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno Setup)
 .github/workflows/           tests on every push; a tagged push builds and publishes a release
 ```

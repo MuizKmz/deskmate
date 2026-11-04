@@ -632,7 +632,7 @@ class QtSmokeTests(unittest.TestCase):
         import random
         from unittest import mock
 
-        from PySide6.QtWidgets import QDialog
+        from PySide6.QtWidgets import QDialog, QPushButton
 
         from deskmate.activity import Activity
         from deskmate.app import Controller
@@ -663,13 +663,15 @@ class QtSmokeTests(unittest.TestCase):
             controller.chat.config.api_key = fake.key
             controller.chat.config.base_url = fake.url
             controller.chat.config.model = "gpt-5.4-mini"
-            now_on = [Activity("Chrome", "lofi hip hop radio - YouTube", "chrome")]
+            now_on = [Activity("Chrome", "lofi hip hop radio - YouTube", "chrome", bounds=(100, 50, 500, 350))]
             controller._read_activity = lambda: now_on[0]
+            song = [None]
+            controller._read_music = lambda: song[0]
             shots = []
 
             def fake_screen(screen):
                 shots.append(screen)
-                image = QImage(800, 450, QImage.Format.Format_RGB32)
+                image = QImage(screen.geometry().size(), QImage.Format.Format_RGB32)
                 image.fill(QColor("gray"))
                 return image
 
@@ -709,8 +711,77 @@ class QtSmokeTests(unittest.TestCase):
             sent = fake.requests[-1]["messages"]
             self.assertIn("buddy", sent[0]["content"])
             self.assertIn("lofi hip hop radio", sent[-1]["content"][0]["text"])
-            self.assertTrue(sent[-1]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+            url = sent[-1]["content"][1]["image_url"]["url"]
+            self.assertTrue(url.startswith("data:image/jpeg;base64,"))
+            import base64
+
+            seen = QImage.fromData(base64.b64decode(url.split(",", 1)[1]))
+            self.assertEqual((seen.width(), seen.height()), (400, 300))  # just the window you're using
             self.assertEqual(controller.chat.transcript()[-1]["about"], "Chrome: lofi hip hop radio - YouTube")
+            # She asked something: answer chips appear by her bubble. Tap one and it's your answer.
+            fake.reply = "[happy] Do you study with this on? <replies>Yes, every day!|Just today</replies>"
+            self.assertEqual(watch.replies.answers(), ["Yes!", "Not really"])  # (her lo-fi question)
+            watch.replies.hide()
+            now_on[0] = Activity("Chrome", "Physics notes - Google Docs", "chrome")
+            watch.watcher.hold(-1e9)
+            watch.watcher._last_ask = -1e9
+            brain._chatting_until = 0
+            watch.polled = -1e9
+            controller._watch_tick(time.monotonic() + 1.5)
+            watch.polled = -1e9
+            controller._watch_tick(time.monotonic() + 2)
+            deadline = time.monotonic() + 10
+            while not watch.replies.isVisible() and time.monotonic() < deadline:
+                spin(0.05)
+            self.assertEqual(watch.replies.answers(), ["Yes, every day!", "Just today"])
+            fake.reply = "[happy] Hardworking~ I'm proud of you!"
+            chip = [b for b in watch.replies.findChildren(QPushButton) if b.text() == "Yes, every day!"][0]
+            chip.click()
+            self.assertFalse(watch.replies.isVisible())
+            deadline = time.monotonic() + 10
+            while controller.bubble.text != "Hardworking~ I'm proud of you!" and time.monotonic() < deadline:
+                spin(0.05)
+            sent = fake.requests[-1]["messages"]
+            self.assertEqual(sent[-1]["content"][0]["text"], "Yes, every day!")  # your answer, with the screen
+            self.assertIn("Do you study with this on?", str(sent[1:-1]))  # ...right after her question
+
+            # A new song starts in the background: she hears it (no picture needed for a song).
+            fake.reply = "[happy] Ooh, Ado now? Villain hits hard~"
+            song[0] = Activity("YouTube Music", "Villain", "chrome", kind="music")
+            watch.music.hold(-1e9)
+            watch.music.settle = 0
+            brain._chatting_until = 0
+            before = len(shots)
+            watch.polled = -1e9
+            controller._watch_tick(time.monotonic() + 3)
+            watch.polled = -1e9
+            controller._watch_tick(time.monotonic() + 4)
+            deadline = time.monotonic() + 10
+            while controller.bubble.text != "Ooh, Ado now? Villain hits hard~" and time.monotonic() < deadline:
+                spin(0.05)
+            self.assertEqual(controller.bubble.text, "Ooh, Ado now? Villain hits hard~")
+            self.assertEqual(fake.requests[-1]["messages"][-1]["content"], "(Now playing: YouTube Music: Villain)")
+            self.assertEqual(len(shots), before)
+            now_on[0] = Activity("Chrome", "lofi hip hop radio - YouTube", "chrome", bounds=(100, 50, 500, 350))
+
+            # You switch away while she's thinking: her late comment is dropped, not shown with the new thing.
+            now_on[0] = Activity("Spotify", "Ado - Odo", "spotify")
+            watch.watcher.hold(-1e9)
+            watch.watcher._last_ask = -1e9
+            watch.watcher._mentioned.clear()
+            brain._chatting_until = 0  # (her last comment counts as chatting for a bit)
+            watch.polled = -1e9
+            controller._watch_tick(time.monotonic() + 3)
+            watch.polled = -1e9
+            fake.reply = "[happy] Ado! Great pick~"
+            controller._watch_tick(time.monotonic() + 4)
+            self.assertTrue(watch.reacting)
+            now_on[0] = Activity("Chrome", "lofi hip hop radio - YouTube", "chrome")  # back already
+            deadline = time.monotonic() + 10
+            while watch.reacting and time.monotonic() < deadline:
+                spin(0.05)
+            self.assertNotEqual(controller.bubble.text, "Ado! Great pick~")
+            self.assertNotIn("Great pick", str(controller.chat.transcript()))
             # Same thing again: she doesn't repeat herself.
             count = len(fake.requests)
             watch.polled = -1e9
@@ -756,6 +827,30 @@ class QtSmokeTests(unittest.TestCase):
             controller._tick()
             self.assertIsNone(controller.watch)
             self.assertIn("Time's up", controller.bubble.text)
+
+            # Where Windows can leave her out of a picture, it's only for the moment it's taken.
+            calls = []
+
+            def exclude(window, on):
+                calls.append(on)
+                return True
+
+            with mock.patch("deskmate.look.exclude_from_capture", exclude), \
+                    mock.patch.object(WatchDialog, "exec", allow):
+                controller.start_watching()
+                self.assertTrue(controller.watch.can_exclude)
+                self.assertEqual(calls, [True, False])  # just the check: she's not hidden while you work
+                calls.clear()
+                got = []
+                controller._capture(got.append)
+                self.assertTrue(calls and all(calls))  # hidden from the picture...
+                deadline = time.monotonic() + 3
+                while not got and time.monotonic() < deadline:
+                    spin(0.05)
+                self.assertIsNotNone(got[0])
+                self.assertEqual(calls.count(True), calls.count(False))  # ...and back right after
+                self.assertFalse(calls[-1])
+                controller.stop_watching()
             log.hide()
             controller._on_about_to_quit()
             controller.companion.close()
