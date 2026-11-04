@@ -104,6 +104,11 @@ def _path(name: str) -> QPainterPath:
             p.moveTo(4, y); p.lineTo(20, y); p.addEllipse(QRectF(x - 2.2, y - 2.2, 4.4, 4.4))
     elif name == "plus":
         p.moveTo(12, 5); p.lineTo(12, 19); p.moveTo(5, 12); p.lineTo(19, 12)
+    elif name == "heart":
+        p.moveTo(12, 20)
+        p.cubicTo(5, 15, 3, 11.5, 3, 8.5); p.cubicTo(3, 5.5, 5.3, 3.8, 7.6, 3.8)
+        p.cubicTo(9.6, 3.8, 11.2, 5, 12, 6.6); p.cubicTo(12.8, 5, 14.4, 3.8, 16.4, 3.8)
+        p.cubicTo(18.7, 3.8, 21, 5.5, 21, 8.5); p.cubicTo(21, 11.5, 19, 15, 12, 20)
     elif name == "clock":
         p.addEllipse(QRectF(3.5, 3.5, 17, 17)); p.moveTo(12, 7.5); p.lineTo(12, 12); p.lineTo(15.5, 14)
     return p

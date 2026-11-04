@@ -62,6 +62,7 @@ class Speech:
     text: str
     duration: float
     kind: str = "line"  # "chat" for her chat replies (the voice can be set to read only those)
+    spoken: str = ""    # what her voice says instead, if different (e.g. the same line in Japanese)
 
 
 def speech_duration(text: str) -> float:
@@ -297,14 +298,26 @@ class Brain:
         self._chatting_until = now + 90
         self._react("blush" if self.rng.random() < 0.3 else "happy", now, 1.2)
 
-    def on_chat_reply(self, now: float, mood: str, text: str) -> None:
+    def on_chat_reply(self, now: float, mood: str, text: str, spoken: str = "") -> None:
         """Her answer from the chat model: show it in the bubble with the mood it came with."""
         duration = min(14.0, speech_duration(text) + 0.04 * max(0, len(text) - 90))
-        self._speech.append(Speech(text, duration, "chat"))
+        self._speech.append(Speech(text, duration, "chat", spoken))
         self._speech_until = now + duration
         self._react(mood or "talk", now, duration)
         self.last_interaction = now
         self._chatting_until = now + 90
+
+    def on_buddy_line(self, now: float, mood: str, text: str, spoken: str = "") -> None:
+        """Buddy mode: she says something about what you're doing, on her own.
+
+        Unlike a chat reply, this doesn't count as you chatting with her: she carries on as
+        usual (walks, chit-chat, getting sleepy...). Watching happens in the background.
+        """
+        duration = min(12.0, speech_duration(text) + 0.04 * max(0, len(text) - 90))
+        self._speech.append(Speech(text, duration, "chat", spoken))
+        self._speech_until = now + duration
+        self._react(mood or "talk", now, duration)
+        self._next_chatter = max(self._next_chatter, now + CHATTER_MIN)  # not two lines back to back
 
     def on_hover(self, now: float, inside: bool) -> None:
         if inside:

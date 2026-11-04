@@ -2,7 +2,7 @@
 
 * ``WatchDialog`` asks first, every time: may she watch, for how long, can she see the screen
   itself (or only which app and title), and how chatty may she be.
-* ``WatchBadge`` is a small 👀 pill beside her for as long as she watches. Click it to stop.
+* ``WatchBadge`` is a small, half see-through 👁 dot by her head while she watches. Click it to stop.
 * ``exclude_from_capture`` keeps her own windows out of the screen picture (Windows 10 2004+):
   she sees what's *behind* her, and doesn't flicker. It's switched on only for the moment she
   takes her picture, so your own screenshots and recordings still show her.
@@ -15,7 +15,7 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import QBuffer, QIODevice, QPoint, QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
     QWidget,
@@ -124,7 +124,7 @@ class WatchDialog(QDialog):
             "• Pictures go only to your chat brain, never saved to disk (today's chat keeps the words).<br>"
             "• She never looks at incognito / private windows, password managers or banking, "
             "and stays quiet during calls.<br>"
-            "• While she watches, a 👀 badge sits next to her. Click it (or Stop in her menu) to end it.<br>"
+            "• While she watches, a small 👁 sign sits by her head. Click it (or Stop in her menu) to end it.<br>"
             "• Each comment sends one picture to your chat brain (about a cent or less with a mini/Haiku model).")
         privacy.setWordWrap(True)
         privacy.setStyleSheet("color: gray;")
@@ -157,10 +157,15 @@ class WatchDialog(QDialog):
 
 # --------------------------------------------------------------------- badge
 class WatchBadge(QWidget):
-    """A small '👀 watching' pill beside her while buddy mode is on. Click it to stop."""
+    """A small, half see-through 👁 dot at the corner of her head while she watches.
+
+    It lights up when the mouse is on it (with a tooltip saying how long is left), and a click
+    stops watching. Small on purpose: a sign that she's watching, not something to stare at.
+    """
 
     clicked = Signal()
-    W, H = 104, 26
+    SIZE = 22
+    RESTING, HOVERED = 0.5, 1.0  # how see-through it is
 
     def __init__(self, name: str, accent: QColor):
         flags = (Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint
@@ -169,39 +174,48 @@ class WatchBadge(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedSize(self.W, self.H)
+        self.setFixedSize(self.SIZE, self.SIZE)
         self._accent = QColor(accent)
-        self._text = "👀 watching"
         self._name = name
+        self._hovered = False
+        self.setWindowOpacity(self.RESTING)
         self.set_left("")
 
     def set_left(self, left: str) -> None:
         """'12 min left' or '' (until you stop it)."""
-        self.setToolTip(f"{self._name} is watching your screen with you" + (f" ({left})" if left else "")
-                        + ".\nClick to stop.")
+        tip = f"{self._name} is watching with you" + (f" · {left}" if left else "") + "\nClick to stop watching"
+        if tip != self.toolTip():
+            self.setToolTip(tip)
 
-    def place(self, body: QRect) -> None:
-        """Just above her head, on the right."""
-        self.move(QPoint(body.right() - self.W + 6, max(0, body.top() - self.H - 2)))
+    def place(self, head: QRect) -> None:
+        """On the top-right corner of her head, a little outside it."""
+        self.move(QPoint(head.right() - self.SIZE // 3, head.top() - self.SIZE // 3))
+
+    def enterEvent(self, _event) -> None:
+        self._hovered = True
+        self.setWindowOpacity(self.HOVERED)
+        self.update()
+
+    def leaveEvent(self, _event) -> None:
+        self._hovered = False
+        self.setWindowOpacity(self.RESTING)
+        self.update()
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
 
     def paintEvent(self, _event) -> None:
+        from .menu_style import icon
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
-        path = QPainterPath()
-        path.addRoundedRect(rect, rect.height() / 2, rect.height() / 2)
-        painter.fillPath(path, QColor(24, 19, 34, 225))
-        painter.setPen(QPen(self._accent, 1.4))
-        painter.drawPath(path)
-        painter.setPen(QColor(244, 238, 250))
-        font = painter.font()
-        font.setPointSizeF(8.5)
-        painter.setFont(font)
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self._text)
+        painter.setBrush(QColor(24, 19, 34, 230))
+        painter.setPen(QPen(self._accent, 1.6 if self._hovered else 1.1))
+        painter.drawEllipse(rect)
+        size = self.SIZE - 8
+        painter.drawPixmap(4, 4, icon("eye", QColor(244, 238, 250)).pixmap(size, size))
 
 
 def thumbnail(image: QImage, width: int = 240, height: int = 150) -> QPixmap:

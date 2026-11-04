@@ -52,6 +52,8 @@ LOOK_TIMEOUT = 90.0  # reading a picture takes longer
 LOOK_TEXT = "Can you take a look at this?"  # what you "say" if you just press Enter while she watches
 
 _MOOD_TAG = re.compile(r"^\s*\[(\w+)\]\s*")
+_SAY_TAG = re.compile(r"<say>(.*?)(?:</say>|$)", re.I | re.S)
+_MEMORY_TAG = re.compile(r"<(remember|forget)>(.{0,200}?)</\1>", re.I | re.S)
 _REMIND_TAG = re.compile(r"<remind\s+when\s*=\s*[\"']([^\"'<>]{1,40})[\"']\s*>(.{0,200}?)</remind>", re.I | re.S)
 
 
@@ -265,6 +267,31 @@ def extract_reminders(text: str) -> tuple[str, list[tuple[str, str]]]:
     return _REMIND_TAG.sub("", text or "").strip(), found[:3]
 
 
+def spoken_prompt(language: str) -> str:
+    """Her voice speaks another language: ask for each reply a second time, in that language, for her voice."""
+    return (f"Your voice speaks {language}. After your reply, also write the same line in natural, casual "
+            f"spoken {language}, the way you would say it out loud, like this: <say>...</say>. Only your short "
+            f"reply line goes in it (not any help after ---). The user reads your reply in English, and hears the "
+            f"<say> line.")
+
+
+def extract_spoken(text: str) -> tuple[str, str]:
+    """Take ``<say>...</say>`` (the line her voice says, in its own language) out of a reply."""
+    found = [m.group(1).strip() for m in _SAY_TAG.finditer(text or "")]
+    spoken = re.sub(r"^\s*\[(\w+)\]\s*", "", found[0]) if found else ""
+    return _SAY_TAG.sub("", text or "").strip(), re.sub(r"\s+", " ", spoken).strip()[:400]
+
+
+def extract_memory(text: str) -> tuple[str, list[str], list[str]]:
+    """Take ``<remember>fact</remember>`` and ``<forget>words</forget>`` out of a reply."""
+    remember, forget = [], []
+    for match in _MEMORY_TAG.finditer(text or ""):
+        what = re.sub(r"\s+", " ", match.group(2)).strip()
+        if what:
+            (remember if match.group(1).lower() == "remember" else forget).append(what)
+    return _MEMORY_TAG.sub("", text or "").strip(), remember[:3], forget[:3]
+
+
 def parse_reply(text: str) -> tuple[str, str]:
     """Split ``"[happy] Hello!"`` into ``("happy", "Hello!")`` and tidy it for the bubble."""
     mood = "talk"
@@ -275,7 +302,7 @@ def parse_reply(text: str) -> tuple[str, str]:
         text = text[match.end():]
     text = re.sub(r"[*_`#]+", "", text or "")            # markdown the model added anyway
     text = re.sub(r"\[(\w+)\]", "", text)                 # stray mood tags
-    text = re.sub(r"</?remind[^>]*>", "", text)           # a broken reminder tag
+    text = re.sub(r"</?(remind|remember|forget|replies|say)[^>]*>", "", text)  # a broken tag
     text = re.sub(r"\s+", " ", text).strip().strip('"').strip()
     if len(text) > MAX_REPLY_CHARS:
         cut = text[:MAX_REPLY_CHARS]
@@ -350,6 +377,10 @@ class ChatSession:
     last_reminders: list[tuple[str, str]] = field(default_factory=list, init=False, repr=False)
     last_details: str = field(default="", init=False, repr=False)
     last_replies: list[str] = field(default_factory=list, init=False, repr=False)  # tap-to-answer chips
+    last_remember: list[str] = field(default_factory=list, init=False, repr=False)  # facts to keep...
+    last_forget: list[str] = field(default_factory=list, init=False, repr=False)    # ...and to drop
+    last_spoken: str = field(default="", init=False, repr=False)  # her reply in her voice's language, if asked
+    previous: tuple[date, list[dict]] | None = field(default=None, init=False, repr=False)  # an earlier day's chat
     _day: date | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -361,9 +392,12 @@ class ChatSession:
             return
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
+            messages = [m for m in data.get("messages", [])
+                        if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)]
             if data.get("date") == self._day.isoformat():
-                self.history = [m for m in data.get("messages", [])
-                                if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)]
+                self.history = messages
+            elif messages:  # an earlier day: kept aside, so it can go into her diary
+                self.previous = (date.fromisoformat(data["date"]), messages)
         except (OSError, ValueError, AttributeError):
             log.warning("Chat history unreadable, starting fresh")
 
@@ -383,6 +417,8 @@ class ChatSession:
     def messages(self, user_text: str, context: str = "", snapshot: Snapshot | None = None,
                  extra: str = "") -> list[dict]:
         if self.today() != self._day:  # a new day: a fresh start (she was up all night with you?)
+            if self.history:
+                self.previous = (self._day, self.history)
             self._day = self.today()
             self.history = []
         system = "\n".join(part for part in (self.persona, context, extra) if part)
@@ -423,10 +459,13 @@ class ChatSession:
         raw = self._complete(self.messages(user_text, context, snapshot, LOOK_PROMPT if snapshot else ""),
                              snapshot is not None)
         raw, self.last_reminders = extract_reminders(raw)
+        raw, self.last_remember, self.last_forget = extract_memory(raw)
+        raw, self.last_spoken = extract_spoken(raw)
         head, details = split_look_reply(raw) if snapshot else (raw, "")
         mood, reply = parse_reply(head)
         self.last_details = details
         noted = "".join(f' <remind when="{when}">{what}</remind>' for when, what in self.last_reminders)
+        noted += "".join(f" <remember>{fact}</remember>" for fact in self.last_remember)  # so she knows it's kept
         mine = {"role": "user", "content": user_text, "time": asked_at}
         if snapshot:
             mine["image"] = True
@@ -450,6 +489,7 @@ class ChatSession:
         if not raw.strip() or "[skip]" in raw.lower():
             return None
         raw, _ = extract_reminders(raw)
+        raw, self.last_spoken = extract_spoken(raw)
         raw, replies = extract_replies(raw)
         mood, reply = parse_reply(_DETAILS_SPLIT.split(raw.strip(), maxsplit=1)[0])
         if reply in ("", "..."):
@@ -466,6 +506,36 @@ class ChatSession:
                          {"role": "assistant", "content": f"[{mood}] {reply}", "time": now, "about": activity[:200]}]
         self._save()
 
+    def translate(self, text: str, language: str) -> str:
+        """Blocking: one of her lines in another language, for her voice (the bubble keeps the English)."""
+        system = (self.persona + f"\nTranslate the line you're given into natural, casual spoken {language}, "
+                  "keeping your tone. Reply with only the translation: no quotes, no notes, no romanization, "
+                  "no mood tag.")
+        raw = self._complete([{"role": "system", "content": system}, {"role": "user", "content": text}], False)
+        line = re.sub(r"^\s*\[(\w+)\]\s*", "", raw.strip().splitlines()[0] if raw.strip() else "")
+        return line.strip().strip('"「」').strip()
+
+    def summarize_day(self, day: date, messages: list[dict]) -> str | None:
+        """Blocking: one diary line about a day you chatted, or None if there's nothing worth keeping."""
+        said = [m for m in messages if m.get("role") == "user" and not m.get("peek")]
+        if len(said) < 2:
+            return None  # a "hi" isn't a day worth writing about
+        lines = []
+        for m in messages[-40:]:
+            text = extract_memory(extract_reminders(m["content"])[0])[0].partition("\n---\n")[0]
+            lines.append(f"{'Them' if m['role'] == 'user' else 'You'}: {text[:300]}")
+        system = (self.persona + "\nYou're writing one line in your diary about a day with the user, "
+                  f"{day:%A %d %B}. Write ONE warm sentence (under 140 characters), speaking to them as \"you\", "
+                  "about what you two talked about or what they were up to, like \"You fixed the perch bug late "
+                  "at night, and we talked about YUI~\". No mood tag. Leave out anything private (passwords, money, "
+                  "health). If there's nothing worth remembering, reply exactly [skip].")
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": "\n".join(lines)}]
+        raw = self._complete(messages, False)
+        if "[skip]" in raw.lower():
+            return None
+        _, line = parse_reply(raw)
+        return line if line not in ("", "...") else None
+
     def transcript(self) -> list[dict]:
         """Today's chat for the chat log window: who, clean text, time, and any reminders she set."""
         if self.today() != self._day:
@@ -480,9 +550,11 @@ class ChatSession:
             else:
                 head, _, details = message["content"].partition("\n---\n")
                 raw, reminders = extract_reminders(head)
+                raw, remembered, _ = extract_memory(raw)
                 mood, text = parse_reply(raw)
                 lines.append({"role": "assistant", "text": text, "mood": mood, "time": message.get("time", ""),
-                              "reminders": reminders, "details": details, "about": message.get("about", "")})
+                              "reminders": reminders, "details": details, "about": message.get("about", ""),
+                              "remembered": remembered})
         return lines
 
     def forget(self) -> None:

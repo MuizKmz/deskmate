@@ -394,6 +394,27 @@ Two small ideas keep it pleasant:
 
 - **Newest line wins.** Each line gets a number (`_turn`). If an older clip arrives after she has already moved on, it's quietly dropped.
 - **Graceful fallback.** If the OpenAI clip fails, the same line is spoken by the Windows voice instead of silence.
+- **Knowing when to be quiet.** `Speaker` takes a `hush()` check: while the window you're using is a call (Teams, Zoom, Meet, the same `Activity.quiet` rule buddy mode uses), lines are shown but not spoken. If that check ever fails, she speaks rather than going mute forever.
+
+**More voices without more code.** Two small changes opened the door to lots of voices:
+
+- The Windows engine already knew every installed voice; it just always grabbed the first female one. Now the hidden PowerShell gets the voice's *name* on the first line of its input, then the text (`SelectVoice(name)`, falling back to the first female voice if that name is gone). A second tiny script lists the installed voices as JSON for the picker. Anything that registers itself as a Windows voice (a language pack, NaturalVoiceSAPIAdapter) just appears.
+- The Natural voice spoke OpenAI's `/audio/speech` protocol, and so do local servers like Kokoro-FastAPI. So "your own server" is the same `OpenAIVoice` with a different `base_url` and no key, exactly like Ollama for chat. Only two things differ: voice names come from the server (`GET /audio/voices`), and OpenAI-only extras (the "speak softly" `instructions`) aren't sent.
+
+Supporting a *protocol* instead of a *company* is what makes this cheap: one class, many voices.
+
+**"It worked, but there's no sound."** The first real test with Kokoro played nothing, and said nothing either. Two lessons:
+
+- *Streamed* WAV files don't know their length when the header is written, so they put 0 or `0xFFFFFFFF` there. Browsers shrug; Windows' `PlaySound` silently refuses. DeskMate now asks for one whole clip (`"stream": false`), and `fix_wav()` repairs such headers anyway (it walks the RIFF chunks, finds `data`, and writes the real sizes).
+- A Chinese voice given an English sentence can return silence. `fix_wav()` checks the loudest sample, and the dialog now shows each voice's language (Kokoro names start with it: `zf_` = Chinese, female) and tests it with a sentence in that language.
+
+**Showing one language, speaking another.** With a Japanese voice, the user wanted to *hear* Japanese but *read* English. Each line she says can now carry a second version: `Speech(text, duration, kind, spoken)`. Where does `spoken` come from?
+
+- **Chat replies and buddy comments:** `spoken_prompt("Japanese")` asks her chat brain to add `<say>…</say>` with the same line in Japanese, in the *same* answer, so there's no extra request and no extra wait. `extract_spoken()` takes it out (like `<remind>` and `<remember>`), and it's never saved to the chat history.
+- **Her fixed lines** (from `character.json`) have no chat brain behind them, so `Speaker` calls `translate(line, "Japanese")` on a background thread. The app keeps every translation in `voice_lines.json`, so "Drink some water~" costs one request ever, not one per reminder.
+- If translating fails, she says it in English; if the Natural voice fails, the Windows fallback gets the *English* line (it probably can't speak Japanese).
+
+The general habit: when something can fail *quietly* (a sound that doesn't play, a file that's empty), check for it yourself and turn it into a message a person can act on.
 
 `Speaker` never touches Qt or the sound card directly: it's given the engines and a "run this in the background" function. So the tests hand it fake engines and check *what* she would say, without making a sound.
 
@@ -427,6 +448,8 @@ flowchart LR
 
 **4. One line, or nothing.** `ChatSession.react()` sends the picture with `BUDDY_PROMPT`: say ONE short, specific line ("Ooh, lo-fi~ is this your study playlist?"), or reply exactly `[skip]` if there's nothing worth saying. Giving the model a way to stay quiet matters as much as telling it what to say. Without it, she'd comment on every spreadsheet. Her line is saved in today's chat (with what it was about), so when you answer "yes I love it", she knows what you mean.
 
+**Watching is a background job, not a mood.** At first her buddy comments went through `brain.on_chat_reply()`, which also starts a 90-second "you're chatting with me" quiet time (no strolls, no chit-chat, so she doesn't wander off mid-conversation). With a comment every few minutes, she was quiet *almost all the time* and just stood there. Buddy comments now use `brain.on_buddy_line()`: it shows the line with its mood, but doesn't count as you chatting (and doesn't count as you saying hi, either), so everything else she does carries on. One brain method per *meaning* ("you talked to me" vs "I said something") keeps that difference explicit.
+
 **Answers you can tap.** If her line is a question, the prompt asks her to add two answers you might give: `<replies>Yes, I love it!|Just background</replies>`. `extract_replies()` takes the tag out (like reminders), and `QuickReplies` shows them as chips by her bubble. Tapping one sends it through the normal chat path, so it's exactly as if you'd typed it. If she asks but forgets the tag, there's a plain *Yes! / Not really* fallback. Letting the model write the choices makes them fit the question, which fixed buttons never could.
 
 **Hearing the music.** A song in the background never becomes the foreground window, so `now_playing()` looks at *every* window's title: Spotify's is `Artist - Song` while playing (just `Spotify Premium` when paused), and a YouTube Music tab is `Song - YouTube Music`. There's a second `Watcher` for songs, with a bigger gap (`Watcher.for_music`), so she reacts to a few songs an hour, not every track. And `Activity.key` treats every YouTube Music / Spotify window title as the *same* app, so a new song doesn't also look like "you opened something new" to the first Watcher. Two watchers, one rule between them: after either one speaks, the other waits (`other.hold(now)`).
@@ -447,7 +470,25 @@ flowchart LR
 
 **Asking for help while she watches.** If you ask about something on screen, `LOOK_PROMPT` lets her answer in two parts split by `---`: one line for the bubble, then **steps**, a short **example**, or **one question back** if she can't tell what you need. `split_look_reply()` cuts it in two (and copes when the model forgets the `---`). The chat window shows the second part as rich text: `details_html()` escapes everything first, then puts code in a light box. Two Qt gotchas found on the way: `QLabel` already has a property called `text`, so `setProperty("text", ...)` silently replaced the rich text; and a rich-text label in nested layouts needs `setMinimumHeight(heightForWidth(...))`, or it's squashed to one line.
 
-**Permission is a feature.** `WatchDialog` asks every time (nothing is remembered as "yes forever"), the 👀 `WatchBadge` is visible the whole time and stops it with one click, and a time limit ends it by itself. Being watched should never be a surprise.
+**Permission is a feature.** `WatchDialog` asks every time (nothing is remembered as "yes forever"), a small 👁 `WatchBadge` sits by her head the whole time (half see-through, so it doesn't steal attention) and stops it with one click, and a time limit ends it by itself. Being watched should never be a surprise.
+
+### Remembering you across days
+
+Today's chat is forgotten at midnight on purpose (it would grow forever). What's worth keeping goes to `memory.py`, in three kinds, each made a different way:
+
+| Kind | Made by | Costs |
+|---|---|---|
+| **Facts** ("Birthday is 12 May") | The model adds `<remember>…</remember>` to a reply when you say something worth keeping, and `<forget>…</forget>` when you ask | Nothing extra: it's part of the reply she was writing anyway |
+| **Diary** ("You fixed the perch bug…") | `ChatSession.summarize_day()`, one small request the next time she starts (or right after midnight) | One short request a day |
+| **Habits** ("listens to GLORIA, 5x") | Buddy mode counts what you stay on for a minute (`memory.habit_of`) | Nothing: counted on your PC |
+
+It's the same trick as reminders: rather than a second "extract the facts" request after every message, the prompt teaches her a tag, and `extract_memory()` cuts it out. Instructions about *when* to use it matter as much as the tag: "something they like or dislike, a project, a plan, a name, a date… not small talk… never passwords, money, health".
+
+**Same fact, newer words.** "Likes YUI" and later "Likes YUI's songs, especially GLORIA" shouldn't be two facts. `remember()` compares simplified versions (lowercase, no punctuation, no little words like *the*/*my*) and replaces the old one if one contains the other. A small rule, but it keeps the list readable.
+
+**What goes into her prompt is small on purpose:** the 15 newest facts, the last 3 diary days (with "yesterday" instead of a date, so she says it naturally), and the 6 most frequent habits from the last two weeks, with "mention now and then, not every time" so she doesn't bring up YUI in every reply.
+
+**Memory you can see is memory you can trust.** Everything she remembers is in one window with a ✕ per line, "Forget everything", and a switch to turn it off. The file is about *you*, so every character shares it.
 
 ### Failing gently
 
@@ -475,7 +516,7 @@ Running from source needs Python. Real users want a download that just works. Th
 ```mermaid
 flowchart LR
     T["git push origin v0.3.0"] --> GA[GitHub Actions<br/>Windows machine]
-    GA --> TS[Run the 124 tests]
+    GA --> TS[Run the 140 tests]
     TS --> PI["PyInstaller<br/>DeskMate.exe + _internal"]
     PI --> CK["DeskMate.exe --check"]
     CK --> IS[Inno Setup<br/>installer]

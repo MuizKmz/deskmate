@@ -52,14 +52,21 @@ SCHEMA: dict[str, tuple[Any, Callable[[Any], bool]]] = {
     "wander": (True, _is_bool),
     "perch": (True, _is_bool),
     "voice": ("off", lambda v: v in ("off", "windows", "openai")),
-    "voice_everything": (False, _is_bool),
-    "openai_voice": ("nova", lambda v: isinstance(v, str) and 0 < len(v) < 40),
+    "voice_lines": ("all", lambda v: v in ("all", "chat")),  # say every line out loud, or only chat replies
+    "openai_voice": ("nova", lambda v: isinstance(v, str) and 0 < len(v) < 80),
+    "windows_voice": ("", lambda v: isinstance(v, str) and len(v) < 120),  # "" = the first female voice
+    "windows_voice_lang": ("", lambda v: isinstance(v, str) and len(v) < 20),  # its culture, e.g. "ja-JP"
+    "voice_translate": (True, _is_bool),  # a Japanese voice says her lines in Japanese (text stays English)
+    "tts_source": ("openai", lambda v: v in ("openai", "local")),  # Natural voice: OpenAI, or your own server
+    "tts_url": ("http://localhost:8880/v1", lambda v: isinstance(v, str) and v.startswith(("http://", "https://"))),
     "tts_model": ("", lambda v: isinstance(v, str) and len(v) < 120),
     "update_check": (True, _is_bool),
     "update_announced": ("", lambda v: isinstance(v, str) and len(v) < 40),
     "last_update_check": (0.0, lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0),
+    "remember": (True, _is_bool),
     "watch_minutes": (60, lambda v: v in (0, 30, 60, 120)),
     "watch_picture": (True, _is_bool),
+    "watch_badge": (True, _is_bool),
     "watch_level": ("normal", lambda v: v in ("quiet", "normal", "chatty")),
     "chat_provider": ("openai", lambda v: v in ("openai", "claude", "ollama")),
     "claude_model": ("", lambda v: isinstance(v, str) and len(v) < 120),

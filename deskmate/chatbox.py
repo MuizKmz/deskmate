@@ -10,7 +10,7 @@ from typing import Any, Callable
 from PySide6.QtCore import QObject, QPoint, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QKeyEvent, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QScrollArea, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -301,6 +301,234 @@ class ChatSettingsDialog(QDialog):
             else:
                 self.status.setText(f"✓ Connected! {len(models)} models available.")
         self._models(tested)
+
+
+class VoiceSettingsDialog(QDialog):
+    """Which voice she speaks with: any Windows voice, and the Natural voice from OpenAI or your own server."""
+
+    SAMPLE = "Hi, it's me~ How do I sound?"
+
+    def __init__(self, settings, openai_key: str, name: str, parent=None, list_windows=None, make_windows=None,
+                 play=None):
+        from .voice import OWN_SERVER_URL, WindowsVoice, list_windows_voices, play_wav
+
+        super().__init__(parent)
+        self.setWindowTitle(f"{name}'s voice")
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        self.setMinimumWidth(480)
+        self._settings = settings
+        self._openai_key = openai_key
+        self._worker = Background(self)
+        self._list_windows = list_windows or list_windows_voices
+        self._windows = (make_windows or WindowsVoice)()
+        self._play = play or play_wav
+        self._cultures = {settings["windows_voice"]: settings["windows_voice_lang"]} if settings["windows_voice"] else {}
+
+        # --- Windows voice
+        self.windows_voice = QComboBox()
+        self.windows_voice.addItem("Automatic (the first female voice)", "")
+        saved = settings["windows_voice"]
+        if saved:
+            self.windows_voice.addItem(saved, saved)
+            self.windows_voice.setCurrentIndex(1)
+        self.test_windows = QPushButton("Test")
+        self.test_windows.clicked.connect(self._test_windows)
+        windows_row = QHBoxLayout()
+        windows_row.addWidget(self.windows_voice, 1)
+        windows_row.addWidget(self.test_windows)
+
+        # --- Natural voice
+        self.source = QComboBox()
+        self.source.addItem("OpenAI (uses your OpenAI key)", "openai")
+        self.source.addItem("My own server, e.g. Kokoro (free, on this PC)", "local")
+        self.source.setCurrentIndex(max(0, self.source.findData(settings["tts_source"])))
+        self.url = QLineEdit(settings["tts_url"] or OWN_SERVER_URL)
+        self.voice = QComboBox()
+        self.voice.setEditable(True)
+        self.voice.currentTextChanged.connect(self._voice_changed)
+        self.language = QLabel("")
+        self.language.setWordWrap(True)
+        self.language.setStyleSheet("color: gray;")
+        self.load = QPushButton("Load voices")
+        self.load.clicked.connect(self._load_voices)
+        self.test_natural = QPushButton("Test")
+        self.test_natural.clicked.connect(self._test_natural)
+        voice_row = QHBoxLayout()
+        voice_row.addWidget(self.voice, 1)
+        voice_row.addWidget(self.load)
+        voice_row.addWidget(self.test_natural)
+
+        self.translate = QCheckBox("Say her lines in the voice's language (chat stays English)")
+        self.translate.setChecked(settings["voice_translate"])
+        self.translate.setToolTip("With a Japanese voice she says her lines in Japanese. Uses your chat brain to "
+                                  "translate (each line only once).")
+        self.translate.toggled.connect(lambda _on: self._voice_changed(self.chosen_voice))
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+        self.form = QFormLayout()
+        self.form.addRow(QLabel("<b>Windows voice</b> (free, offline)"))
+        self.form.addRow("Voice", windows_row)
+        self.form.addRow(QLabel("<b>Natural voice</b>"))
+        self.form.addRow("From", self.source)
+        self.form.addRow("Server address", self.url)
+        self.form.addRow("Voice", voice_row)
+        self.form.addRow("", self.language)
+        self.form.addRow("", self.translate)
+        note = QLabel("More Windows voices: a language's speech pack (Windows Settings › Time & language) adds some; "
+                      "NaturalVoiceSAPIAdapter adds Windows' natural voices. Your own server: run Kokoro-FastAPI "
+                      "(github.com/remsky/Kokoro-FastAPI) and keep the address above. Voices like af_bella or "
+                      "jf_alpha (Japanese), even mixes like af_bella+af_sky.")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: gray;")
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addLayout(self.form)
+        layout.addWidget(note)
+        layout.addWidget(self.status)
+        layout.addWidget(buttons)
+
+        self.source.currentIndexChanged.connect(self._source_changed)
+        self._source_changed(first=True)
+        self._worker.run(self._list_windows, self._got_windows_voices)
+
+    # ------------------------------------------------------------------ values
+    @property
+    def chosen_windows_voice(self) -> str:
+        return self.windows_voice.currentData() if self.windows_voice.currentIndex() >= 0 else ""
+
+    @property
+    def chosen_windows_culture(self) -> str:
+        return self._cultures.get(self.chosen_windows_voice, "")
+
+    @property
+    def chosen_source(self) -> str:
+        return self.source.currentData()
+
+    @property
+    def chosen_voice(self) -> str:
+        return self.voice.currentText().strip()
+
+    @property
+    def chosen_url(self) -> str:
+        return self.url.text().strip().rstrip("/")
+
+    def natural_config(self) -> ChatConfig:
+        if self.chosen_source == "local":
+            return ChatConfig(provider="local", base_url=self.chosen_url)
+        return ChatConfig(provider="openai", api_key=self._openai_key)
+
+    def _source_changed(self, *_args, first: bool = False) -> None:
+        from .voice import OPENAI_VOICES, OWN_SERVER_VOICE
+
+        own = self.chosen_source == "local"
+        self.form.setRowVisible(self.url, own)
+        current = self._settings["openai_voice"] if first else ""
+        self.voice.clear()
+        if own:
+            if current in OPENAI_VOICES or not current:
+                current = OWN_SERVER_VOICE
+            self.voice.addItem(current)
+        else:
+            for name in OPENAI_VOICES:
+                self.voice.addItem(name)
+            if current not in OPENAI_VOICES:
+                current = "nova"
+        self.voice.setEditText(current)
+        self.status.setText("" if own or self._openai_key else "No OpenAI key yet: add one in Chat settings.")
+
+    # ------------------------------------------------------------------ Windows
+    def _got_windows_voices(self, ok: bool, voices) -> None:
+        from .voice import describe_windows_voice
+
+        if not ok or not voices:
+            return
+        keep = self.chosen_windows_voice
+        self.windows_voice.clear()
+        self.windows_voice.addItem("Automatic (the first female voice)", "")
+        for voice in voices:
+            self.windows_voice.addItem(describe_windows_voice(voice), voice["name"])
+            self._cultures[voice["name"]] = voice.get("culture", "")
+        self.windows_voice.setCurrentIndex(max(0, self.windows_voice.findData(keep)))
+
+    def _test_windows(self) -> None:
+        self._windows.name = self.chosen_windows_voice
+        try:
+            self._windows.speak(self.SAMPLE)
+            self.status.setText("")
+        except OSError as error:
+            self.status.setText(f"The Windows voice didn't start: {error}")
+
+    # ------------------------------------------------------------------ natural
+    def _busy(self, text: str) -> None:
+        self.status.setText(text)
+        self.load.setEnabled(False)
+        self.test_natural.setEnabled(False)
+
+    def _idle(self) -> None:
+        self.load.setEnabled(True)
+        self.test_natural.setEnabled(True)
+
+    def _load_voices(self) -> None:
+        from .voice import list_voices
+
+        config = self.natural_config()
+        self._busy("Connecting...")
+
+        def done(ok: bool, value) -> None:
+            self._idle()
+            if not ok:
+                self.status.setText(self._explain(value))
+                return
+            keep = self.chosen_voice
+            self.voice.clear()
+            for name in value:
+                self.voice.addItem(name)
+            self.voice.setEditText(keep if keep in value or not value else value[0])
+            self.status.setText(f"✓ {len(value)} voices available." if value else "Connected, but no voices listed.")
+
+        self._worker.run(lambda: list_voices(config), done)
+
+    def _voice_changed(self, name: str) -> None:
+        from .voice import voice_language
+
+        language = voice_language(name) if self.chosen_source == "local" else ""
+        if not language:
+            self.language.setText("")
+        elif "English" in language:
+            self.language.setText(f"{language} voice")
+        elif self.translate.isChecked():
+            self.language.setText(f"{language} voice: she says her lines in {language}.")
+        else:
+            self.language.setText(f"{language} voice: reads her English lines the {language} way.")
+
+    def _test_natural(self) -> None:
+        from .voice import OpenAIVoice, sample_for
+
+        natural = OpenAIVoice(self.natural_config(), voice=self.chosen_voice)
+        sample = sample_for(natural.voice) if natural.own_server else self.SAMPLE
+        self._busy("Asking for a sample...")
+
+        def done(ok: bool, value) -> None:
+            self._idle()
+            if not ok:
+                self.status.setText(self._explain(value))
+                return
+            self.status.setText(f"✓ Playing {natural.voice}: “{sample}”")
+            try:
+                self._play(value)
+            except Exception as error:  # the sound card said no
+                self.status.setText(f"Got the clip, but couldn't play it: {error}")
+
+        self._worker.run(lambda: natural.synthesize(sample), done)
+
+    def _explain(self, error) -> str:
+        if isinstance(error, ValueError):
+            return str(error)
+        if isinstance(error, ChatError) and error.kind == "offline" and self.chosen_source == "local":
+            return "Can't reach your server. Is Kokoro-FastAPI running, at this address?"
+        return describe_error(error)
 
 
 def describe_error(error: BaseException) -> str:
@@ -594,6 +822,7 @@ class ChatLogWindow(QWidget):
             about = line["about"]
             extra.append("👀 " + (about if len(about) <= 52 else about[:50].rstrip() + "…"))
         extra += [f"⏰ {when}: {what}" for when, what in line.get("reminders", [])]
+        extra += [f"💭 {fact}" for fact in line.get("remembered", [])]
         extra = "   ".join(x for x in extra if x)
         if extra:
             small = QLabel(extra)
@@ -668,3 +897,213 @@ class _AvatarHolder:
     def __init__(self, label: QLabel, smooth: bool):
         self.avatar = label
         self._smooth = smooth
+
+
+class MemoryWindow(QWidget):
+    """'What I remember about you': her facts, diary and your habits, each with a ✕ to delete it."""
+
+    removed = Signal(str, object)  # (section, index or key)
+    cleared = Signal()
+    W, H = 400, 520
+
+    def __init__(self, name: str, theme: dict[str, str], avatar: QPixmap, smooth: bool = True):
+        flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint
+        super().__init__(None, flags)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setWindowTitle(f"What {name} remembers")
+        self.resize(self.W, self.H)
+        self._accent = accent_of(theme)
+        self._name = name
+        self._drag_from: QPoint | None = None
+        from .menu_style import Header
+
+        top = QWidget(self)
+        bar = QHBoxLayout(top)
+        bar.setContentsMargins(14, 12, 10, 6)
+        face = QLabel()
+        face.setFixedSize(40, 40)
+        Header.set_avatar(_AvatarHolder(face, smooth), avatar, self._accent)
+        titles = QVBoxLayout()
+        titles.setSpacing(0)
+        title = QLabel("What I remember about you")
+        title.setStyleSheet(f"color: {INK.name()}; font-size: 11.5pt; font-weight: 600;")
+        self.subtitle = QLabel(name)
+        self.subtitle.setStyleSheet(f"color: {_css(INK, 0.6)}; font-size: 8.5pt;")
+        titles.addWidget(title)
+        titles.addWidget(self.subtitle)
+        close = QToolButton()
+        close.setText("✕")
+        close.setAutoRaise(True)
+        close.setCursor(Qt.CursorShape.PointingHandCursor)
+        close.setStyleSheet(f"QToolButton {{ color: {_css(INK, 0.7)}; font-size: 12pt; border: none; padding: 4px 8px;"
+                            f" border-radius: 8px; }} QToolButton:hover {{ background: {_css(self._accent, 0.3)}; }}")
+        close.clicked.connect(self.hide)
+        bar.addWidget(face)
+        bar.addLayout(titles, 1)
+        bar.addWidget(close, 0, Qt.AlignmentFlag.AlignTop)
+        self._top = top
+
+        self.area = QScrollArea(self)
+        self.area.setWidgetResizable(True)
+        self.area.setFrameShape(QFrame.Shape.NoFrame)
+        self.area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.area.setStyleSheet(f"""
+            QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; }}
+            QScrollBar:vertical {{ background: transparent; width: 8px; margin: 4px 2px; }}
+            QScrollBar::handle:vertical {{ background: {_css(self._accent, 0.45)}; border-radius: 3px; min-height: 30px; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}""")
+        self.inner = QWidget()
+        self.column = QVBoxLayout(self.inner)
+        self.column.setContentsMargins(16, 6, 12, 6)
+        self.column.setSpacing(4)
+        self.area.setWidget(self.inner)
+
+        bottom = QWidget(self)
+        row = QHBoxLayout(bottom)
+        row.setContentsMargins(16, 6, 14, 12)
+        hint = QLabel(f"Tell {name} “remember that…” or “forget that…” in chat.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {_css(INK, 0.5)}; font-size: 8pt;")
+        self.clear_button = QToolButton()
+        self.clear_button.setText("Forget everything")
+        self.clear_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clear_button.setStyleSheet(f"QToolButton {{ color: {INK.name()}; border: 1px solid {_css(self._accent, 0.5)};"
+                                        f" border-radius: 10px; padding: 3px 10px; font-size: 8.5pt; }}"
+                                        f" QToolButton:hover {{ background: rgba(232, 143, 143, 0.35); }}")
+        self.clear_button.clicked.connect(self._confirm_clear)
+        row.addWidget(hint, 1)
+        row.addWidget(self.clear_button)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(top)
+        layout.addWidget(self.area, 1)
+        layout.addWidget(bottom)
+
+    # ------------------------------------------------------------------ content
+    def show_memory(self, memory, today, enabled: bool = True) -> None:
+        """Fill the window from a memory.Memory."""
+        from .memory import _day_label, _habit_text
+
+        while self.column.count():
+            widget = self.column.takeAt(0).widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        self.subtitle.setText(self._name if enabled else f"{self._name} · remembering is switched off")
+        if memory.empty:
+            empty = QLabel(f"Nothing yet.\nChat with {self._name}, tell her what you like,\n"
+                           "or let her watch with you~")
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty.setStyleSheet(f"color: {_css(INK, 0.5)}; font-size: 10pt; padding: 50px 0;")
+            self.column.addWidget(empty)
+        if memory.facts:
+            self._heading("About you")
+            for i in reversed(range(len(memory.facts))):
+                self._row(memory.facts[i]["text"], "facts", i)
+        if memory.days:
+            self._heading("Our days")
+            for i in reversed(range(len(memory.days))):
+                day = memory.days[i]
+                when = _day_label(day["date"], today)
+                self._row(f"{when[0].upper()}{when[1:]}: {day['summary']}", "days", i)
+        habits = sorted(memory.habits.items(), key=lambda kv: (kv[1]["count"], kv[1]["last"]), reverse=True)
+        if habits:
+            self._heading("What you often do (while I watch with you)")
+            for key, habit in habits[:20]:
+                text = _habit_text(habit)
+                self._row(f"{text[0].upper()}{text[1:]}  ·  {habit['count']}x", "habits", key)
+        self.column.addStretch(1)
+        self.clear_button.setEnabled(not memory.empty)
+
+    def rows(self) -> list[tuple[str, str]]:
+        """(section, text) of every row on screen (handy for tests)."""
+        return [(w.property("section"), w.text()) for w in self.inner.findChildren(QLabel) if w.property("section")]
+
+    def delete_buttons(self) -> list[QToolButton]:
+        return [b for b in self.inner.findChildren(QToolButton) if b.property("section")]
+
+    def _heading(self, text: str) -> None:
+        label = QLabel(text)
+        label.setStyleSheet(f"color: {self._accent.name()}; font-size: 9pt; font-weight: 600; padding-top: 10px;")
+        self.column.addWidget(label)
+
+    def _row(self, text: str, section: str, key) -> None:
+        holder = QWidget()
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(0, 0, 0, 0)
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setProperty("section", section)
+        label.setTextFormat(Qt.TextFormat.PlainText)
+        label.setStyleSheet(f"color: {INK.name()}; font-size: 9.5pt; padding: 3px 0;")
+        remove = QToolButton()
+        remove.setText("✕")
+        remove.setToolTip("Forget this")
+        remove.setProperty("section", section)
+        remove.setCursor(Qt.CursorShape.PointingHandCursor)
+        remove.setStyleSheet(f"QToolButton {{ color: {_css(INK, 0.45)}; border: none; padding: 2px 6px;"
+                             f" border-radius: 6px; }} QToolButton:hover {{ color: {INK.name()};"
+                             f" background: {_css(self._accent, 0.3)}; }}")
+        remove.clicked.connect(lambda _=False, s=section, k=key: self.removed.emit(s, k))
+        row.addWidget(label, 1)
+        row.addWidget(remove, 0, Qt.AlignmentFlag.AlignTop)
+        self.column.addWidget(holder)
+
+    def _confirm_clear(self) -> None:
+        from PySide6.QtWidgets import QMessageBox
+
+        box = QMessageBox(QMessageBox.Icon.Question, "Forget everything?",
+                          f"{self._name} will forget everything she remembers about you. This can't be undone.",
+                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel, self)
+        box.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        if box.exec() == QMessageBox.StandardButton.Yes:
+            self.cleared.emit()
+
+    # ------------------------------------------------------------------ window
+    def open_near(self, body: QRect, available: QRect) -> None:
+        x = body.left() - self.width() - 10
+        if x < available.left():
+            x = body.right() + 10
+        y = body.bottom() - self.height()
+        x = max(available.left(), min(x, available.right() - self.width()))
+        y = max(available.top(), min(y, available.bottom() - self.height()))
+        self.move(QPoint(x, y))
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            self.hide()
+        else:
+            super().keyPressEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self._top.geometry().contains(event.position().toPoint()):
+            self._drag_from = event.globalPosition().toPoint() - self.pos()
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag_from is not None:
+            self.move(event.globalPosition().toPoint() - self._drag_from)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._drag_from = None
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        path = QPainterPath()
+        path.addRoundedRect(rect, 16, 16)
+        gradient = QLinearGradient(0, 0, 0, rect.height())
+        gradient.setColorAt(0, GLASS_TOP)
+        gradient.setColorAt(1, GLASS_BOTTOM)
+        painter.fillPath(path, gradient)
+        painter.setPen(QPen(QColor(self._accent.red(), self._accent.green(), self._accent.blue(), 140), 1.2))
+        painter.drawPath(path)
+        line_y = self._top.geometry().bottom() + 1
+        painter.setPen(QPen(QColor(self._accent.red(), self._accent.green(), self._accent.blue(), 60), 1))
+        painter.drawLine(QPoint(16, line_y), QPoint(int(rect.width()) - 16, line_y))

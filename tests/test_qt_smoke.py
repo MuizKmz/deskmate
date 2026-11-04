@@ -552,14 +552,131 @@ class QtSmokeTests(unittest.TestCase):
             controller._event(lambda now: brain.on_chat_reply(now, "happy", "Hehe~ hi!"))
             windows.speak.assert_called_with("Hehe hi!")
             calls = windows.speak.call_count
-            controller._event(lambda now: brain.on_pet(now))  # an ordinary line: not read out by default
+            controller._event(lambda now: brain.say(now, "Good morning~"))  # her ordinary lines are said too...
+            self.assertEqual(windows.speak.call_count, calls + 1)
+            controller._voice_line_actions["chat"].trigger()  # ...unless you only want chat replies
+            self.assertEqual(settings["voice_lines"], "chat")
+            controller._event(lambda now: brain.say(now, "Water time!"))
+            self.assertEqual(windows.speak.call_count, calls + 1)
+            controller._voice_line_actions["all"].trigger()
+
+            # In a call: the bubble shows her line, but she doesn't talk over your meeting.
+            from deskmate.activity import Activity
+
+            controller._read_activity = lambda: Activity("Teams", "Standup | Microsoft Teams", "ms-teams")
+            calls = windows.speak.call_count
+            controller._event(lambda now: brain.on_chat_reply(now, "happy", "Psst~ good luck!"))
+            self.assertEqual(controller.bubble.text, "Psst~ good luck!")
             self.assertEqual(windows.speak.call_count, calls)
-            controller.act_voice_all.trigger()
-            self.assertTrue(settings["voice_everything"])
+            controller._read_activity = lambda: None
+
+            # A Japanese voice says her lines in Japanese; the chat and bubble stay English.
+            from tests.fake_openai import FakeOpenAI
+
+            brain_server = FakeOpenAI()
+            self.addCleanup(brain_server.close)
+            controller.chat.config.api_key = brain_server.key
+            controller.chat.config.base_url = brain_server.url
+            controller.chat.config.model = "gpt-5.4-mini"
+            settings["windows_voice_lang"] = "ja-JP"
+            brain_server.reply = "[happy] Welcome back~ <say>おかえり～</say>"
+            controller._on_chat_sent("hye")
+            deadline = time.monotonic() + 10
+            while controller.bubble.text != "Welcome back~" and time.monotonic() < deadline:
+                spin(0.05)
+            self.assertIn("<say>", brain_server.requests[-1]["messages"][0]["content"])
+            windows.speak.assert_called_with("おかえり～")  # (～ is kept: it's how Japanese stretches a sound)
+            brain_server.reply = "お水を飲んでね"
+            controller._event(lambda now: brain.say(now, "Drink some water~"))  # a fixed line: translated...
+            deadline = time.monotonic() + 10
+            while windows.speak.call_args[0][0] != "お水を飲んでね" and time.monotonic() < deadline:
+                spin(0.05)
+            windows.speak.assert_called_with("お水を飲んでね")
+            count = len(brain_server.requests)
+            controller._event(lambda now: brain.say(now, "Drink some water~"))  # ...only once
+            spin(0.2)
+            self.assertEqual(len(brain_server.requests), count)
+            windows.speak.assert_called_with("お水を飲んでね")
+            settings["voice_translate"] = False
+            controller._event(lambda now: brain.say(now, "Drink some water~"))
+            windows.speak.assert_called_with("Drink some water")
+            settings["windows_voice_lang"] = ""
+            controller._set_gravity(False)
+            controller.take_walk()  # the app's own little lines have a voice too
+            windows.speak.assert_called_with("Turn on Gravity first I need a floor to walk on!")
 
             controller._voice_actions["openai"].trigger()  # no key saved: she asks for one instead
             self.assertIn("key", controller.bubble.text)
+
+            # Voice settings: any Windows voice by name, and the Natural voice from your own server.
+            from PySide6.QtWidgets import QDialog
+
+            from deskmate.chatbox import VoiceSettingsDialog
+            from tests.fake_openai import FakeOpenAI
+
+            fake = FakeOpenAI()
+            self.addCleanup(fake.close)
+            fake.require_key = False  # like Kokoro on your PC
+            fake.MODELS = ["kokoro"]
+            installed = [{"name": "Microsoft Zira Desktop", "gender": "Female", "culture": "en-US"},
+                         {"name": "Microsoft Haruka Desktop", "gender": "Female", "culture": "ja-JP"}]
+            tester, played = mock.MagicMock(), []
+            dialog = VoiceSettingsDialog(settings, "", "Testy", list_windows=lambda: installed,
+                                         make_windows=lambda: tester, play=played.append)
+            deadline = time.monotonic() + 5
+            while dialog.windows_voice.count() < 3 and time.monotonic() < deadline:
+                spin(0.05)
+            self.assertEqual(dialog.windows_voice.itemText(2), "Microsoft Haruka Desktop (ja-JP, female)")
+            dialog.windows_voice.setCurrentIndex(2)
+            dialog.test_windows.click()
+            self.assertEqual(tester.name, "Microsoft Haruka Desktop")
+            tester.speak.assert_called_once_with(dialog.SAMPLE)
+            self.assertFalse(dialog.form.isRowVisible(dialog.url))  # OpenAI: no address needed
+            dialog.source.setCurrentIndex(dialog.source.findData("local"))
+            self.assertTrue(dialog.form.isRowVisible(dialog.url))
+            dialog.url.setText(fake.url)
+            dialog.load.click()
+            deadline = time.monotonic() + 5
+            while not dialog.load.isEnabled() or dialog.voice.count() < 3 and time.monotonic() < deadline:
+                spin(0.05)
+            self.assertEqual([dialog.voice.itemText(i) for i in range(dialog.voice.count())],
+                             ["af_bella", "af_heart", "jf_alpha"])
+            dialog.voice.setEditText("jf_alpha")
+            dialog.test_natural.click()
+            deadline = time.monotonic() + 5
+            while not played and time.monotonic() < deadline:
+                spin(0.05)
+            self.assertEqual(played, [FakeOpenAI.WAV])
+            self.assertEqual((fake.requests[-1]["voice"], fake.requests[-1]["model"]), ("jf_alpha", "kokoro"))
+            self.assertEqual(fake.requests[-1]["input"], "こんにちは、私の声はどうですか？")  # a Japanese voice: a Japanese line
+            self.assertIn("Japanese voice", dialog.language.text())
+            dialog.voice.setEditText("af_bella")
+            self.assertEqual(dialog.language.text(), "American English voice")
+            dialog.close()
+
+            def save(dialog):
+                dialog._worker.busy = 0
+                dialog.windows_voice.addItem("Microsoft Haruka Desktop", "Microsoft Haruka Desktop")
+                dialog.windows_voice.setCurrentIndex(dialog.windows_voice.count() - 1)
+                dialog.source.setCurrentIndex(dialog.source.findData("local"))
+                dialog.url.setText(fake.url)
+                dialog.voice.setEditText("jf_alpha")
+                return QDialog.DialogCode.Accepted
+
+            with mock.patch.object(VoiceSettingsDialog, "exec", save), \
+                    mock.patch("deskmate.voice.list_windows_voices", return_value=[]):
+                self.assertTrue(controller.open_voice_settings())
+            self.assertEqual((settings["windows_voice"], settings["tts_source"], settings["openai_voice"]),
+                             ("Microsoft Haruka Desktop", "local", "jf_alpha"))
+            self.assertEqual(controller.speaker.windows.name, "Microsoft Haruka Desktop")
+            self.assertTrue(controller.speaker.openai.own_server)
+            self.assertEqual(controller._voice_actions["openai"].text(), "Natural voice (your own server)")
+            controller.speaker.windows = windows
+            controller.bubble.dismiss()
+            controller._voice_actions["openai"].trigger()  # your own server needs no key: no complaint
+            self.assertFalse(controller.bubble.isVisible())
             controller._on_about_to_quit()
+            self.assertEqual(settings["tts_model"], "")  # Kokoro's model isn't kept as the OpenAI one
             controller.companion.close()
 
     def test_chat_log_window(self):
@@ -696,6 +813,18 @@ class QtSmokeTests(unittest.TestCase):
             controller._tick()
             self.assertTrue(watch.badge.isVisible())
             self.assertEqual(watch.left(time.monotonic()), "30 min left")
+            self.assertIn("30 min left", watch.badge.toolTip())
+            self.assertAlmostEqual(watch.badge.windowOpacity(), watch.badge.RESTING, places=2)  # see-through...
+            watch.badge.enterEvent(None)
+            self.assertEqual(watch.badge.windowOpacity(), 1.0)  # ...until the mouse is on it
+            watch.badge.leaveEvent(None)
+            controller.act_watch_badge.trigger()  # can be hidden altogether
+            watch.polled = -1e9
+            controller._tick()
+            self.assertFalse(watch.badge.isVisible())
+            controller.act_watch_badge.trigger()
+            controller._tick()
+            self.assertTrue(watch.badge.isVisible())
 
             # She reacts to what you opened (once you've stayed on it), with a picture of the screen.
             fake.reply = "[happy] Ooh, lo-fi~ is this your study playlist?"
@@ -851,6 +980,103 @@ class QtSmokeTests(unittest.TestCase):
                 self.assertEqual(calls.count(True), calls.count(False))  # ...and back right after
                 self.assertFalse(calls[-1])
                 controller.stop_watching()
+            log.hide()
+            controller._on_about_to_quit()
+            controller.companion.close()
+
+    def test_she_remembers_you(self):
+        import json
+        import random
+        from datetime import date, timedelta
+        from unittest import mock
+
+        from deskmate.activity import Activity
+        from deskmate.app import Controller, _Watch
+        from deskmate.brain import Brain
+        from deskmate.character import load_pack
+        from deskmate.companion import load_frames
+        from deskmate.settings import Settings
+        from tests.fake_openai import FakeOpenAI
+
+        fake = FakeOpenAI()
+        self.addCleanup(fake.close)
+        with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
+            yesterday = date.today() - timedelta(days=1)
+            (Path(home) / "chat_testy.json").write_text(json.dumps({"date": yesterday.isoformat(), "messages": [
+                {"role": "user", "content": "I fixed the perch bug!"}, {"role": "assistant", "content": "[happy] Yay"},
+                {"role": "user", "content": "now YUI time"}, {"role": "assistant", "content": "[happy] GLORIA~"}]}),
+                encoding="utf-8")
+            settings = Settings(Path(home) / "settings.json")
+            settings["perch"] = False  # never sit on the test machine's real windows
+            settings["update_check"] = False  # no real GitHub calls in tests
+            pack = load_pack(self.root)
+            brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5), wallclock=noon)
+            controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
+            controller.start()
+            controller.chat.config.api_key = fake.key
+            controller.chat.config.base_url = fake.url
+            controller.chat.config.model = "gpt-5.4-mini"
+
+            # Yesterday's chat becomes a diary line (a little after start-up).
+            fake.reply = "You fixed the perch bug, then we listened to YUI~"
+            controller._write_diary()
+            deadline = time.monotonic() + 10
+            while not controller.memory.days and time.monotonic() < deadline:
+                spin(0.05)
+            self.assertEqual(controller.memory.days[0]["summary"], "You fixed the perch bug, then we listened to YUI~")
+            self.assertIsNone(controller.chat.previous)
+
+            # Tell her something: she keeps it, and it's in her prompt from then on.
+            fake.reply = "[happy] Got it~ <remember>Birthday is 12 May</remember>"
+            controller.open_chat_log()
+            log = controller._chat_log
+            log.edit.setText("remember my birthday is 12 May")
+            log.edit.returnPressed.emit()
+            deadline = time.monotonic() + 10
+            while log._waiting and time.monotonic() < deadline:
+                spin(0.05)
+            self.assertEqual([f["text"] for f in controller.memory.facts], ["Birthday is 12 May"])
+            self.assertTrue((Path(home) / "memory.json").exists())
+            fake.reply = "[happy] Of course I know~"
+            log.edit.setText("when is my birthday?")
+            log.edit.returnPressed.emit()
+            deadline = time.monotonic() + 10
+            while log._waiting and time.monotonic() < deadline:
+                spin(0.05)
+            system = fake.requests[-1]["messages"][0]["content"]
+            self.assertIn("- Birthday is 12 May", system)
+            self.assertIn("yesterday: You fixed the perch bug", system)
+
+            # Buddy mode counts what keeps coming back (after you've stayed on it a minute).
+            controller.watch = _Watch(None, False, mock.Mock(), mock.Mock(), mock.Mock(), mock.Mock())
+            song = Activity("YouTube Music", "GLORIA", "chrome", kind="music")
+            controller._notice_habit("music", song, 100.0)
+            controller._notice_habit("music", song, 130.0)
+            self.assertEqual(controller.memory.habits, {})  # not a minute yet
+            controller._notice_habit("music", song, 161.0)
+            controller._notice_habit("music", song, 200.0)  # counted once per time you stay on it
+            self.assertEqual(controller.memory.habits["music|gloria"]["count"], 1)
+            controller.watch = None
+
+            # The window shows it all; ✕ forgets one thing.
+            controller.act_memory.trigger()
+            window = controller._memory_window
+            self.assertTrue(window.isVisible())
+            self.assertEqual([r[0] for r in window.rows()], ["facts", "days", "habits"])
+            [b for b in window.delete_buttons() if b.property("section") == "facts"][0].click()
+            self.assertEqual(controller.memory.facts, [])
+            self.assertNotIn("facts", [r[0] for r in window.rows()])
+
+            # Switched off: nothing about you goes into her prompt.
+            controller.act_remember.trigger()
+            self.assertFalse(settings["remember"])
+            log.edit.setText("hi")
+            log.edit.returnPressed.emit()
+            deadline = time.monotonic() + 10
+            while log._waiting and time.monotonic() < deadline:
+                spin(0.05)
+            self.assertNotIn("perch bug", fake.requests[-1]["messages"][0]["content"])
+            window.hide()
             log.hide()
             controller._on_about_to_quit()
             controller.companion.close()

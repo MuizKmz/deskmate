@@ -35,6 +35,7 @@ dozes off when you leave, pouts when you ignore her, and reminds you to drink wa
 | ⏰ **Reminds you** | "Remind me at 3pm about the meeting": ask in chat or add one from her menu, and she tells you on time. |
 | 💬 **Talks** | Speech bubbles with a typing effect, from her own lines in `character.json`. She can also say them out loud. |
 | 🧠 **Chats with you** | Type to her and she answers in character, powered by OpenAI, Claude or a free local model (Ollama). Remembers your day. |
+| 💭 **Remembers you** | Your birthday, your projects, your favourite songs, and a little diary of your days together. You can see and delete all of it. |
 | 👀 **Watches with you** | Only if you say yes: she notices what you open and reacts like a buddy ("Ooh, lo-fi~ study playlist?"), and you can ask her about anything on your screen. |
 | 🛡️ **Hard to break** | One copy at a time, safe settings saves, never gets lost off-screen, logs every error, and still starts if images are missing. |
 
@@ -64,7 +65,7 @@ Double-click **`run_deskmate.bat`**. The first time, it sets itself up (about 1�
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 124 self-tests
+run_deskmate.bat --test        # run the 140 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -137,15 +138,32 @@ Right-click her → **Watch with me...** (or the 👁 button in the chat windows
 
 Then just do your thing. When you settle on something new (a video, a song, a game, a file), she notices and says something like a friend next to you would: *"Ooh, lo-fi~ is this your study playlist?"*, *"Whoa, a red error! Want me to look?"* If there's nothing worth saying, she stays quiet.
 
+- **She's still herself.** Watching happens in the background: she keeps walking around, changing faces and chit-chatting as usual, and only now and then says something about what you're doing.
 - **She hears your music.** Playing Spotify or YouTube Music, even in the background? Now and then, when a new song starts, she reacts to it: *"Ooh, Ado now? Villain hits hard~"* (Not every song: a few an hour at most.)
 - **Tap to answer.** When she asks you something, little answer chips pop up by her bubble (*"Yes, I love it!"*, *"Just background"*). Tap one, or 💬 to type your own.
 
 - **Answer her** in chat ("yes I love it"): she knows what she was talking about. While she watches, every message you send includes what's on your screen right now, so you can also just ask *"what does this error mean?"*. For help, the chat window gets **steps**, a short **example**, or a **question back**.
-- A **👀 watching** badge sits above her the whole time. **Click it** to stop (or **Stop** in the chat window, or the menu). It also stops by itself when the time is up.
+- A small, half see-through **👁** sits at the corner of her head while she watches. Point at it to see the time left, **click it** to stop (or **Stop** in the chat window, or the menu). It also stops by itself when the time is up. Settings › "Show the 👁 sign while she watches" hides it (the tray tooltip and her menu still tell you).
 - **Never:** incognito / InPrivate windows, password managers, banking or sign-in pages: no picture, no comment. She stays quiet during Teams / Zoom / Meet calls, while you're chatting, when you're away from the PC, and when she's asleep.
 - She doesn't repeat herself about the same thing, and there's a limit per hour.
 - Her picture is just the window you're using (not your other monitor). Pictures stay in memory and go only to your chat brain. Today's chat file keeps only the words. On Windows 10/11 her own windows are left out of her picture (just for that moment), so she sees what's behind her and doesn't flicker, and your own screenshots still show her.
 - Works with all three brains. On Ollama, use a model that can see pictures (`ollama pull llama3.2-vision`), or untick "see the screen".
+
+### 💭 She remembers you
+
+She remembers you across days (not just today's chat). Right-click → **What I remember about you** shows everything, with a ✕ to delete any of it:
+
+| | Where it comes from |
+|---|---|
+| **About you** | Things you tell her in chat: *"remember my birthday is 12 May"*, or just *"I love YUI"*. She notices what's worth keeping. Say *"forget that…"* and she does. |
+| **Our days** | A little diary: the day after you chat, she writes one line about it (*"You fixed the perch bug late at night, then we listened to YUI~"*). |
+| **What you often do** | While she watches with you (buddy mode): the songs, sites and projects that keep coming back. Counted on your PC. |
+
+So she can say things like *"YUI again? You really love her~"* or *"How did yesterday's bug fix go?"*
+
+- She never keeps passwords, money or health details, or anything you call secret.
+- It's one file on your PC (`%APPDATA%\DeskMate\memory.json`), shared by all characters (it's about *you*). A few lines of it go along with your chat messages, so your chat brain sees them too.
+- **Forget everything** in that window wipes it all. Settings › **Remember me across days** switches it off.
 
 ### 🔊 Her voice
 
@@ -157,7 +175,16 @@ Right-click → Settings › **Voice**:
 | **Windows voice (free)** | The speech engine built into Windows. Works offline, a little robotic |
 | **Natural voice (OpenAI)** | A soft, natural voice using your OpenAI key (a fraction of a cent per line). If it can't connect, the Windows voice takes over |
 
-She reads out her **chat replies**. Tick **Read all her lines** to hear her greetings and reminders too. Decorations like `~` and `*yawn*` aren't read out.
+She says **everything** out loud: chat replies, greetings, reminders, her little idle lines and buddy-mode comments (the bubble still shows the text). Prefer quiet? Pick **Only say chat replies out loud** in the same menu. Decorations like `~` and `*yawn*` aren't read out, and while you're in a Teams / Zoom / Meet call she only shows the text, so she never talks over your meeting.
+
+**Voice settings...** (in the same menu) lets you choose *which* voice, with a **Test** button for each:
+
+- **Windows voice:** any voice installed on Windows, by name (e.g. *Microsoft Haruka Desktop* for Japanese). Installing a language's speech pack adds some; the free [NaturalVoiceSAPIAdapter](https://github.com/gexgd0419/NaturalVoiceSAPIAdapter) makes Windows 11's natural voices show up too (it's a clever hack, so a Windows update may break it).
+- **Natural voice from your own server (free, offline):** run [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) on your PC (`docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu:latest`, or its `start-cpu.ps1` without Docker), choose **My own server**, keep `http://localhost:8880/v1`, click **Load voices**. Kokoro has dozens of voices, and you can mix them (`af_bella+af_sky`). The first letter is the language, the second is female/male: `af_`/`am_` American English, `bf_`/`bm_` British English, `jf_` Japanese, `zf_` Chinese, `ef_` Spanish, `ff_` French, `hf_` Hindi, `if_` Italian, `pf_` Portuguese. **Japanese (or other) voice, English chat:** with a non-English voice, she *says* her lines in that voice's language while the bubble and chat stay English ("Welcome back~" on screen, 「おかえり～」 out loud). Her chat brain writes the spoken version together with each reply (no extra cost), and translates her fixed lines (greetings, reminders…) once and remembers them. This works for Japanese Windows voices too (like *Microsoft Haruka*). Untick **Say her lines in the voice's language** in Voice settings to turn it off. No key, nothing leaves your PC. Any server that speaks OpenAI's `/audio/speech` works the same way.
+- If the Natural voice can't be reached, she falls back to the Windows voice.
+
+> [!NOTE]
+> Only use voices you have the right to use. Cloning a real person's voice (like an anime character's voice actor) without their consent isn't okay, even for fun.
 
 ### ⏰ Reminders
 
@@ -272,6 +299,7 @@ deskmate/
 ├── chatbox.py          the chat box, the Today's chat window and the Chat settings dialog
 ├── look.py             buddy mode's windows: the permission box, the 👀 badge, screen pictures
 ├── activity.py         buddy mode's eyes: which app / tab you're on, and when a comment is due
+├── memory.py           she remembers you: facts, a diary of your days, your habits
 ├── menu_style.py       her glass right-click menu (icons and switches drawn in code)
 ├── character.py        loads + checks character packs
 ├── settings.py         settings with safe saves
@@ -288,7 +316,7 @@ tools/make_blink.py          makes a blink picture from idle + sleep
 tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
-tests/                       124 tests (python -m unittest)
+tests/                       140 tests (python -m unittest)
 packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno Setup)
 .github/workflows/           tests on every push; a tagged push builds and publishes a release
 ```
@@ -307,7 +335,8 @@ GitHub Actions runs the tests on Windows, builds `DeskMate.exe`, makes the insta
 - ✅ **Phase 2 — Alive:** blinking, gravity, flinging, walking along the taskbar with a real walk cycle.
 - ✅ **Phase 3 — AI:** chat with her (OpenAI or a free local model with Ollama), she remembers your day.
 - ✅ **Phase 3½ — Extras:** sit on windows, wave / stretch / yawn, a chat log window, voice, Claude as a third chat brain, "a new version is out" notice.
-- **Phase 5 — She notices you:** ✅ watches with you (buddy mode) · talk to her with your voice · knows which app you're in · remembers you across days.
+- ✅ **Phase 5 — She notices you:** watches with you (buddy mode, hears your music, tap-to-answer), remembers you across days.
+- ⏸️ **Talk to her with your voice** (on hold).
 - ⏸️ **Phase 4 — Online:** a shared pet for your team (on hold).
 
 ---

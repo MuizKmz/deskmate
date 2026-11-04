@@ -1,3 +1,4 @@
+import json
 import os
 import random
 import tempfile
@@ -259,6 +260,59 @@ class ServerTests(unittest.TestCase):
         self.assertLessEqual(len(cut), C.MAX_DETAILS_CHARS + 10)
         self.assertEqual(cut.count("```") % 2, 0)  # a cut code block is still closed
 
+    def test_she_remembers_what_you_tell_her(self):
+        session = self.session()
+        self.fake.reply = '[happy] Got it, I\'ll remember~ <remember>Birthday is 12 May</remember>'
+        self.assertEqual(session.ask("remember my birthday is 12 May"), ("happy", "Got it, I'll remember~"))
+        self.assertEqual((session.last_remember, session.last_forget), (["Birthday is 12 May"], []))
+        self.assertEqual(session.transcript()[-1]["remembered"], ["Birthday is 12 May"])  # shown in the chat log
+        self.fake.reply = "[talk] Okay, forgotten. <forget>birthday</forget>"
+        session.ask("forget my birthday")
+        self.assertEqual((session.last_remember, session.last_forget), ([], ["birthday"]))
+        self.assertEqual(C.parse_reply("[happy] ok <remember>half"), ("happy", "ok half"))
+
+    def test_an_earlier_day_goes_to_her_diary(self):
+        (self.tmp / "chat.json").write_text(json.dumps({"date": "2026-10-29", "messages": [
+            {"role": "user", "content": "I fixed the perch bug!"}, {"role": "assistant", "content": "[happy] Yay~"},
+            {"role": "user", "content": "now YUI time"}, {"role": "assistant", "content": "[happy] GLORIA!"}]}),
+            encoding="utf-8")
+        session = self.session()
+        self.assertEqual(session.history, [])  # a new day...
+        day, messages = session.previous  # ...but yesterday is kept aside for the diary
+        self.assertEqual((day, len(messages)), (date(2026, 10, 29), 4))
+        self.fake.reply = "You fixed the perch bug, then we listened to YUI~"
+        self.assertEqual(session.summarize_day(day, messages), "You fixed the perch bug, then we listened to YUI~")
+        sent = self.fake.requests[-1]["messages"]
+        self.assertIn("diary", sent[0]["content"])
+        self.assertIn("Them: I fixed the perch bug!", sent[1]["content"])
+        self.fake.reply = "[skip]"
+        self.assertIsNone(session.summarize_day(day, messages))
+        self.assertIsNone(session.summarize_day(day, messages[:2]))  # just one thing said: not worth a line
+        # Midnight passes while she's running: today's chat becomes "previous" too.
+        session.ask("hi")
+        session.ask("still up")
+        self.day = date(2026, 10, 31)
+        session.messages("good morning")
+        self.assertEqual(session.previous[0], date(2026, 10, 30))
+
+    def test_her_voice_can_speak_another_language(self):
+        session = self.session()
+        self.fake.reply = "[happy] Welcome back~ <say>おかえり～</say>"
+        self.assertEqual(session.ask("hye", C.spoken_prompt("Japanese")), ("happy", "Welcome back~"))
+        self.assertEqual(session.last_spoken, "おかえり～")
+        self.assertIn("<say>", self.fake.requests[-1]["messages"][0]["content"])
+        self.assertNotIn("おかえり", str(session.history))  # the chat keeps only the English
+        self.fake.reply = "[happy] Ooh, lo-fi~ <say>[happy] わあ、ローファイだ～</say>"
+        session.react("Chrome: lofi - YouTube")
+        self.assertEqual(session.last_spoken, "わあ、ローファイだ～")
+        self.fake.reply = "[happy] No voice line this time"
+        session.ask("ok")
+        self.assertEqual(session.last_spoken, "")
+        self.fake.reply = "「お水を飲んでね～」"
+        self.assertEqual(session.translate("Drink some water~", "Japanese"), "お水を飲んでね～")
+        self.assertIn("Japanese", self.fake.requests[-1]["messages"][0]["content"])
+        self.assertEqual(C.parse_reply("[happy] hi <say>cut"), ("happy", "hi cut"))
+
     def test_ollama_needs_no_key(self):
         config = C.ChatConfig(provider="ollama")
         self.assertFalse(config.needs_key)
@@ -304,6 +358,21 @@ class BrainChatTests(unittest.TestCase):
         brain.on_chat_reply(10, "blush", "W-what?")
         self.assertEqual([s.text for s in brain.drain_speech()], ["W-what?"])
         self.assertEqual(brain.expression(10.5), "blush")
+
+    def test_buddy_lines_dont_stop_her_being_herself(self):
+        brain = self.make()
+        brain.drain_speech()
+        before = brain.last_interaction
+        brain.on_buddy_line(10, "happy", "Ooh, lo-fi~")
+        self.assertEqual([s.text for s in brain.drain_speech()], ["Ooh, lo-fi~"])
+        self.assertEqual(brain.expression(10.5), "happy")
+        self.assertEqual(brain.last_interaction, before)  # her talking isn't you saying hi
+        walked = False
+        for t in range(11, 400, 5):
+            brain.last_interaction = t
+            brain.tick(t, user_idle=1)
+            walked = walked or "wander" in brain.drain_animations()
+        self.assertTrue(walked)  # she still strolls around while watching with you
 
     def test_no_random_chatter_or_strolls_while_you_chat(self):
         brain = self.make()

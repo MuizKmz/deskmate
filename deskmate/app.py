@@ -184,6 +184,7 @@ class Controller:
     TICK_MS = 250
     MISSED_DELAY_MS = 6000  # mention missed reminders after her hello
     UPDATE_FIRST_MS = 20000  # first update check a little after start-up
+    DIARY_FIRST_MS = 12000   # yesterday's diary line, a little after start-up
 
     def __init__(self, app, settings, pack, frames, brain, idle):
         from PySide6.QtCore import QTimer
@@ -217,6 +218,11 @@ class Controller:
         from .reminders import ReminderBook
 
         self.reminders = ReminderBook(data_dir() / "reminders.json")
+        from .memory import Memory
+
+        self.memory = Memory(data_dir() / "memory.json")  # about you, so every character shares it
+        self._memory_window = None
+        self._diary_busy = False
         self.speaker = self._make_speaker()
         self._update = None  # a newer release, if GitHub has one
         self._update_worker = None
@@ -271,6 +277,7 @@ class Controller:
         self._update_timer.timeout.connect(self._maybe_check_updates)
         self._update_timer.start()
         QTimer.singleShot(self.UPDATE_FIRST_MS, self._maybe_check_updates)
+        QTimer.singleShot(self.DIARY_FIRST_MS, self._write_diary)
         self._apply(now)
         missed = self.reminders.pop_missed()
         if missed:
@@ -288,6 +295,8 @@ class Controller:
         except Exception:  # never let one bad tick kill her; it's logged
             log.exception("Brain tick failed")
         self._check_reminders(now)
+        if self.chat.previous is not None and not self._diary_busy:
+            self._write_diary()  # midnight passed while she was running
         if self.watch is not None:
             try:
                 self._watch_tick(now)
@@ -306,7 +315,7 @@ class Controller:
                 self.bubble.say(speech.text, speech.duration,
                                 self.companion.head_rect_global(), self.companion.available_rect())
                 try:
-                    self.speaker.say(speech.text, speech.kind)
+                    self.speaker.say(speech.text, speech.kind, speech.spoken)
                 except Exception:  # her voice must never break her
                     log.exception("Voice failed")
         if self.tray is not None:
@@ -341,8 +350,7 @@ class Controller:
         if not self.companion.isVisible():
             self.show_companion()
         if not self.companion.gravity:
-            self.bubble.say("Turn on Gravity first~ I need a floor to walk on!", 3.5,
-                            self.companion.head_rect_global(), self.companion.available_rect())
+            self._say_now("Turn on Gravity first~ I need a floor to walk on!", 3.5)
             return
         if self.companion.falling or not self.companion.on_floor():
             self._walk_after_landing = True  # land first, then go
@@ -417,10 +425,14 @@ class Controller:
         if self._chat_log is not None:
             self._chat_log.add_pending(text, datetime.now().strftime("%H:%M"), image=with_picture)
         worked = (now - self.brain._active_since) / 60.0
-        context = situation(datetime.now(), self.brain.label(now), worked)
+        context = situation(datetime.now(), self.brain.label(now), worked) + self._memory_context() + self._voice_context()
         if watch is not None:
             context += "\n" + self._watch_context(activity)
         session = self.chat
+        if self._chat_worker is None:  # (e.g. an answer chip tapped before any chat window was opened)
+            from .chatbox import Background
+
+            self._chat_worker = Background()
 
         def ask(image) -> None:
             from .look import snapshot_from
@@ -446,6 +458,7 @@ class Controller:
             if not self.settings[key] and self.chat.config.model:
                 self._set(key, self.chat.config.model)  # remember the model that was picked for you
             self._reminders_from_chat(now)
+            self._memories_from_chat()
         else:
             kind = value.kind if isinstance(value, ChatError) else "server"
             log.warning("Chat failed (%s): %s", kind, getattr(value, "detail", value))
@@ -458,8 +471,107 @@ class Controller:
             else:  # keep your unanswered message on screen, with her explanation under it
                 self._chat_log.add_note(reply)
         self.bubble.dismiss()
-        self.brain.on_chat_reply(now, mood, reply)
+        self.brain.on_chat_reply(now, mood, reply, self.chat.last_spoken if ok else "")
         self._apply(now)
+
+    # ---------------------------------------------------------------- memory
+    def _memory_context(self) -> str:
+        from datetime import date
+
+        return "\n" + self.memory.prompt(date.today()) if self.settings["remember"] else ""
+
+    def _memories_from_chat(self) -> None:
+        from datetime import date
+
+        if not self.settings["remember"]:
+            return
+        for words in self.chat.last_forget:
+            log.info("Forgot %d memories (asked in chat)", self.memory.forget(words))
+        for fact in self.chat.last_remember:
+            if self.memory.remember(fact, date.today()):
+                log.info("Remembered something new from chat")
+        if (self.chat.last_remember or self.chat.last_forget) and self._memory_window is not None \
+                and self._memory_window.isVisible():
+            self._refresh_memory_window()
+
+    def _write_diary(self) -> None:
+        """One diary line about an earlier day you chatted (yesterday, usually). Quietly does nothing if it can't."""
+        from .chatbox import Background
+
+        previous, self.chat.previous = self.chat.previous, None
+        if previous is None or self._diary_busy or not self.settings["remember"]:
+            return
+        day, messages = previous
+        if self.memory.has_day(day) or (self.chat.config.needs_key and not self.chat.config.api_key):
+            return
+        self._diary_busy = True
+        if self._chat_worker is None:
+            self._chat_worker = Background()
+        session = self.chat
+
+        def done(ok: bool, value) -> None:
+            self._diary_busy = False
+            if ok and value:
+                self.memory.add_day(day, value)
+                log.info("Diary line written for %s", day)
+                if self._memory_window is not None and self._memory_window.isVisible():
+                    self._refresh_memory_window()
+            elif not ok:
+                log.warning("Couldn't write the diary line: %s", value)
+
+        self._chat_worker.run(lambda: session.summarize_day(day, messages), done)
+
+    def _notice_habit(self, slot: str, activity, now: float) -> None:
+        """Buddy mode: once you've stayed on something for a while, count it as a habit."""
+        from datetime import date
+
+        from .memory import habit_of
+
+        watch = self.watch
+        key = activity.key if activity is not None else None
+        seen = watch.habits.get(slot)
+        if seen is None or seen[0] != key:
+            watch.habits[slot] = [key, now, False]
+            return
+        if not seen[2] and now - seen[1] >= self.HABIT_SECONDS and self.settings["remember"]:
+            seen[2] = True
+            habit = habit_of(activity)
+            if habit is not None:
+                self.memory.notice(*habit, date.today())
+
+    def open_memory(self) -> None:
+        """Menu: 'What I remember about you'."""
+        from .chatbox import MemoryWindow
+
+        if self._memory_window is None:
+            self._memory_window = MemoryWindow(self.pack.name, self.pack.theme, self.icon.pixmap(96),
+                                               smooth=self.pack.meta.get("smooth", True))
+            self._memory_window.removed.connect(self._remove_memory)
+            self._memory_window.cleared.connect(self._clear_memory)
+        if not self.companion.isVisible():
+            self.show_companion()
+        self._refresh_memory_window()
+        self._memory_window.open_near(self._body_rect(), self.companion.available_rect())
+
+    def _refresh_memory_window(self) -> None:
+        from datetime import date
+
+        self._memory_window.show_memory(self.memory, date.today(), self.settings["remember"])
+
+    def _remove_memory(self, section: str, key) -> None:
+        self.memory.remove(section, key)
+        self._refresh_memory_window()
+
+    def _clear_memory(self) -> None:
+        self.memory.clear()
+        self._refresh_memory_window()
+        self._event(lambda t: self.brain.say(t, "...Huh? Who are you? Ehehe, just kidding~ but it's all gone.",
+                                             "surprised"))
+
+    def _set_remember(self, on: bool) -> None:
+        self._set("remember", on)
+        if self._memory_window is not None and self._memory_window.isVisible():
+            self._refresh_memory_window()
 
     # ------------------------------------------------------------- reminders
     def _check_reminders(self, now: float) -> None:
@@ -593,6 +705,7 @@ class Controller:
 
     # ---------------------------------------------------- buddy mode (watching)
     WATCH_POLL = 2.0     # seconds between "what are you on?" checks (free: just a window title)
+    HABIT_SECONDS = 60   # stay on something this long and it counts toward "what you often do"
     AWAY_SECONDS = 120   # no comments while you're away from the PC
 
     def toggle_watching(self) -> None:
@@ -690,8 +803,8 @@ class Controller:
             self.stop_watching("expired")
             return
         visible = self.companion.isVisible()
-        if visible:
-            watch.badge.place(self._body_rect())
+        if visible and self.settings["watch_badge"]:
+            watch.badge.place(self.companion.head_rect_global())
             watch.badge.set_left(watch.left(now))
             if not watch.badge.isVisible():
                 watch.badge.show()
@@ -705,8 +818,11 @@ class Controller:
         if watch.replies.isVisible() and (not self.bubble.isVisible() or now > watch.replies_until):
             watch.replies.hide()  # her question is gone: so are the answer chips
         activity = self._read_activity()
+        playing = self._read_music()
         target = watch.watcher.observe(now, activity)
-        song = watch.music.observe(now, self._read_music())
+        song = watch.music.observe(now, playing)
+        self._notice_habit("app", activity, now)
+        self._notice_habit("music", playing, now)
         busy = (watch.reacting or (self._chat_worker is not None and self._chat_worker.busy)
                 or now < getattr(self.brain, "_chatting_until", 0))
         if busy or not visible or self.brain.asleep or self.idle.seconds() > self.AWAY_SECONDS:
@@ -728,7 +844,8 @@ class Controller:
         if self._chat_worker is None:
             self._chat_worker = Background()
         now = time.monotonic()
-        context = situation(datetime.now(), self.brain.label(now), (now - self.brain._active_since) / 60.0)
+        context = (situation(datetime.now(), self.brain.label(now), (now - self.brain._active_since) / 60.0)
+                   + self._memory_context() + self._voice_context())
         session = self.chat
         music = activity.kind == "music"
         log.info("Buddy mode: asking her about %s", "the song" if music else activity.app)
@@ -779,7 +896,7 @@ class Controller:
         self.chat.remember_reaction(activity.describe(), mood, reply, music)
         if self._chat_log is not None and self._chat_log.isVisible():
             self._chat_log.set_lines(self.chat.transcript())
-        self.brain.on_chat_reply(now, mood, reply)
+        self.brain.on_buddy_line(now, mood, reply, self.chat.last_spoken)  # not "chatting": she keeps being herself
         self._apply(now)
         if self.chat.last_replies and self.bubble.isVisible():
             from .look import REPLIES_SECONDS
@@ -866,7 +983,7 @@ class Controller:
         history = self.chat.history
         self.chat = self._make_chat()
         self.chat.history = history
-        self.speaker.openai.config.api_key = load_key(secrets)
+        self._refresh_voice_key()
         log.info("Chat settings saved (provider %s)", provider)
         return True
 
@@ -946,6 +1063,7 @@ class Controller:
         self.act_chat = action(f"Chat with {name}...", self.open_chat, "chat")
         self.act_chat_log = action("Today's chat", self.open_chat_log, "clock")
         self.act_look = action("Watch with me...", self.toggle_watching, "eye")
+        self.act_memory = action("What I remember about you", self.open_memory, "heart")
         self.act_talk = action("Talk to me", lambda: self._event(self.brain.on_talk_request), "sparkle")
         self.act_walk = action("Take a walk", self.take_walk, "walk")
         self.act_sleep = action("Go to sleep", self._toggle_sleep, "moon")
@@ -972,6 +1090,9 @@ class Controller:
         settings = self.settings_menu = submenu(menu, "Settings", "settings")
         self.act_top = toggle("Always on top", self._set_on_top, self.settings["always_on_top"], settings)
         self.act_chatty = toggle("Chit-chat now and then", self._set_chatty, self.settings["chatty"], settings)
+        self.act_remember = toggle("Remember me across days", self._set_remember, self.settings["remember"], settings)
+        self.act_watch_badge = toggle("Show the 👁 sign while she watches", lambda on: self._set("watch_badge", on),
+                                      self.settings["watch_badge"], settings)
         self.act_gravity = toggle("Gravity (falls to the taskbar)", self._set_gravity, self.settings["gravity"],
                                   settings)
         self.act_wander = toggle("Wander around", self._set_wander, self.settings["wander"], settings)
@@ -989,7 +1110,7 @@ class Controller:
         voice_group = QActionGroup(voice_menu)
         voice_group.setExclusive(True)
         self._voice_actions = {}
-        for key, label in (("off", "Off"), ("windows", "Windows voice (free)"), ("openai", "Natural voice (OpenAI)")):
+        for key, label in (("off", "Off"), ("windows", "Windows voice (free)"), ("openai", self._natural_label())):
             act = QAction(label, voice_menu)
             act.setCheckable(True)
             act.setChecked(self.settings["voice"] == key)
@@ -999,8 +1120,21 @@ class Controller:
             self._voice_actions[key] = act
         self._mark_choices(self._voice_actions.values())
         voice_menu.addSeparator()
-        self.act_voice_all = toggle("Read all her lines (not just chat)", self._set_voice_everything,
-                                    self.settings["voice_everything"], voice_menu)
+        voice_menu.addSeparator()
+        lines_group = QActionGroup(voice_menu)
+        lines_group.setExclusive(True)
+        self._voice_line_actions = {}
+        for key, label in (("all", "Say everything out loud"), ("chat", "Only say chat replies out loud")):
+            act = QAction(label, voice_menu)
+            act.setCheckable(True)
+            act.setChecked(self.settings["voice_lines"] == key)
+            act.triggered.connect(functools.partial(self._set_voice_lines, key))
+            lines_group.addAction(act)
+            voice_menu.addAction(act)
+            self._voice_line_actions[key] = act
+        self._mark_choices(self._voice_line_actions.values())
+        voice_menu.addSeparator()
+        self.act_voice_settings = action("Voice settings...", self.open_voice_settings, "settings", voice_menu)
         settings.addSeparator()
         action("Chat settings...", self.open_chat_settings, "key", settings)
         action("Forget today's chat", self._forget_chat, "eraser", settings)
@@ -1087,7 +1221,7 @@ class Controller:
         self.stop_watching("switch")  # a new character asks for her own permission
         self._set("character", pack.id)
         self.chat = self._make_chat()
-        for attr in ("_chat_box", "_chat_log"):
+        for attr in ("_chat_box", "_chat_log", "_memory_window"):
             window = getattr(self, attr)
             if window is not None:
                 window.hide()
@@ -1168,20 +1302,61 @@ class Controller:
         from .voice import OpenAIVoice, Speaker, WindowsVoice
 
         self._voice_worker = Background()
-        config = ChatConfig(provider="openai", api_key=load_key(data_dir() / "secrets.json"))
-        natural = OpenAIVoice(config, voice=self.settings["openai_voice"], model=self.settings["tts_model"])
-        return Speaker(WindowsVoice(), natural, self._voice_worker.run, mode=self.settings["voice"],
-                       everything=self.settings["voice_everything"])
+        if self.settings["tts_source"] == "local":  # your own server (e.g. Kokoro): no key, its own voices
+            config = ChatConfig(provider="local", base_url=self.settings["tts_url"])
+            model = ""
+        else:
+            config = ChatConfig(provider="openai", api_key=load_key(data_dir() / "secrets.json"))
+            model = self.settings["tts_model"]
+        natural = OpenAIVoice(config, voice=self.settings["openai_voice"], model=model)
+        return Speaker(WindowsVoice(name=self.settings["windows_voice"]), natural, self._voice_worker.run,
+                       mode=self.settings["voice"], everything=self.settings["voice_lines"] == "all",
+                       hush=self._in_a_call, language=self._spoken_language, translate=self._translate_line)
 
-    def _set_voice(self, mode: str, _checked: bool = True) -> None:
+    def _natural_label(self) -> str:
+        return ("Natural voice (your own server)" if self.settings["tts_source"] == "local"
+                else "Natural voice (OpenAI)")
+
+    def _refresh_voice_key(self) -> None:
         from .chat import load_key
 
+        if self.speaker.openai is not None and not self.speaker.openai.own_server:
+            self.speaker.openai.config.api_key = load_key(data_dir() / "secrets.json")
+
+    def open_voice_settings(self) -> bool:
+        """Menu: Voice › Voice settings. Pick a Windows voice, and where the Natural voice comes from."""
+        from .chat import load_key
+        from .chatbox import VoiceSettingsDialog
+
+        dialog = VoiceSettingsDialog(self.settings, load_key(data_dir() / "secrets.json"), self.pack.name)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return False
+        if dialog.chosen_source != self.settings["tts_source"] or dialog.chosen_url != self.settings["tts_url"]:
+            self._set("tts_model", "")  # a different server has different models
+        self._set("windows_voice", dialog.chosen_windows_voice)
+        self._set("windows_voice_lang", dialog.chosen_windows_culture)
+        self._set("voice_translate", dialog.translate.isChecked())
+        self._set("tts_source", dialog.chosen_source)
+        if dialog.chosen_url:
+            self._set("tts_url", dialog.chosen_url)
+        if dialog.chosen_voice:
+            self._set("openai_voice", dialog.chosen_voice[:79])
+        self.settings.save()
+        self.speaker.stop()
+        self.speaker = self._make_speaker()
+        self._voice_actions["openai"].setText(self._natural_label())
+        log.info("Voice settings saved (natural voice from %s)", dialog.chosen_source)
+        if self.settings["voice"] != "off":
+            self.speaker.say("Hehe, how do I sound now~?", "chat")
+        return True
+
+    def _set_voice(self, mode: str, _checked: bool = True) -> None:
         self._set("voice", mode)
         self.speaker.stop()
         self.speaker.mode = mode
-        self.speaker.openai.config.api_key = load_key(data_dir() / "secrets.json")
+        self._refresh_voice_key()
         self._mark_choices(self._voice_actions.values())
-        if mode == "openai" and not self.speaker.openai.config.api_key:
+        if mode == "openai" and not self.speaker.openai.own_server and not self.speaker.openai.config.api_key:
             self._event(lambda now: self.brain.say(now, "I need your OpenAI key for that voice... "
                                                         "add it in Settings, Chat settings~", "pouty"))
             return
@@ -1189,9 +1364,73 @@ class Controller:
             lines = {"windows": "Can you hear me now?", "openai": "Hehe, how do I sound~?"}
             self.speaker.say(lines[mode], "chat")  # a quick sample, even if she only reads chat
 
-    def _set_voice_everything(self, on: bool) -> None:
-        self._set("voice_everything", bool(on))
-        self.speaker.everything = bool(on)
+    def _set_voice_lines(self, which: str, _checked: bool = True) -> None:
+        self._set("voice_lines", which)
+        self.speaker.everything = which == "all"
+        self._mark_choices(self._voice_line_actions.values())
+
+    def _spoken_language(self) -> str:
+        """The language her voice speaks, if she should say her lines in it ("" = just say the English)."""
+        from .voice import culture_language, voice_language
+
+        if not self.settings["voice_translate"]:
+            return ""
+        mode = self.settings["voice"]
+        if mode == "openai" and self.settings["tts_source"] == "local":
+            language = voice_language(self.settings["openai_voice"])
+        elif mode == "windows":
+            language = culture_language(self.settings["windows_voice_lang"])
+        else:
+            language = ""
+        return "" if "English" in language else language
+
+    def _translate_line(self, text: str, language: str) -> str:
+        """(Background thread.) One of her lines in her voice's language; each line is translated only once."""
+        import json
+        import threading
+
+        if not hasattr(self, "_translations"):
+            self._translations_lock = threading.Lock()
+            path = data_dir() / "voice_lines.json"
+            try:
+                self._translations = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            except (OSError, ValueError):
+                self._translations = {}
+        key = f"{language}|{text}"
+        with self._translations_lock:
+            if key in self._translations:
+                return self._translations[key]
+        line = self.chat.translate(text, language)
+        if line:
+            with self._translations_lock:
+                self._translations[key] = line
+                if len(self._translations) > 800:  # keep it small: forget the oldest
+                    self._translations = dict(list(self._translations.items())[-600:])
+                try:
+                    (data_dir() / "voice_lines.json").write_text(
+                        json.dumps(self._translations, ensure_ascii=False, indent=0), encoding="utf-8")
+                except OSError:
+                    log.warning("Couldn't save the translated lines", exc_info=True)
+        return line
+
+    def _voice_context(self) -> str:
+        from .chat import spoken_prompt
+
+        language = self._spoken_language()
+        return "\n" + spoken_prompt(language) if language else ""
+
+    def _in_a_call(self) -> bool:
+        """You're in a Teams / Zoom / Meet call right now: she doesn't talk out loud (just shows the text)."""
+        activity = self._read_activity()
+        return activity is not None and activity.quiet
+
+    def _say_now(self, text: str, seconds: float) -> None:
+        """A quick line from the app itself (not from her brain): bubble and voice, like her other lines."""
+        self.bubble.say(text, seconds, self.companion.head_rect_global(), self.companion.available_rect())
+        try:
+            self.speaker.say(text, "line")
+        except Exception:
+            log.exception("Voice failed")
 
     # --------------------------------------------------------------- updates
     def _maybe_check_updates(self) -> None:
@@ -1311,12 +1550,13 @@ class Controller:
         self.settings.save()
         self.bubble.dismiss()
         self.stop_watching("quit")
-        for window in (self._chat_box, self._chat_log):
+        for window in (self._chat_box, self._chat_log, self._memory_window):
             if window is not None:
                 window.hide()
         try:
             self.speaker.stop()
-            if self.speaker.openai is not None and self.speaker.openai.model and not self.settings["tts_model"]:
+            if (self.speaker.openai is not None and not self.speaker.openai.own_server and self.speaker.openai.model
+                    and not self.settings["tts_model"]):
                 self.settings["tts_model"] = self.speaker.openai.model
                 self.settings.save()
         except Exception:
@@ -1353,12 +1593,13 @@ class _Watch:
         self.picture = picture      # may she see the screen itself, or only app names?
         self.watcher = watcher      # activity.Watcher: decides when a comment about what you do is due
         self.music = music          # ...and one for the songs that play
-        self.badge = badge          # the 👀 pill beside her
+        self.badge = badge          # the little 👁 sign by her head
         self.replies = replies      # answer chips under her questions
         self.replies_until = 0.0
         self.can_exclude = False    # Windows can leave her out of a screen picture
         self.reacting = False       # waiting for her brain's comment
         self.polled = -1e9
+        self.habits = {}            # "app" / "music" -> [key, since, counted]
 
     def left(self, now: float) -> str:
         if self.until is None:

@@ -7,16 +7,29 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
+def _tone(seconds: float = 0.2, rate: int = 24000) -> bytes:
+    """A little 440 Hz beep as a 16-bit mono WAV."""
+    import math
+    import struct
+
+    samples = b"".join(struct.pack("<h", int(3000 * math.sin(2 * math.pi * 440 * i / rate)))
+                       for i in range(int(seconds * rate)))
+    return struct.pack("<4sI4s4sIHHIIHH4sI", b"RIFF", 36 + len(samples), b"WAVE", b"fmt ", 16, 1, 1, rate,
+                       rate * 2, 2, 16, b"data", len(samples)) + samples
+
+
 class FakeOpenAI:
     MODELS = ["gpt-4o-mini-transcribe", "gpt-4o-mini-tts", "gpt-5-mini", "gpt-5.4-mini", "gpt-6.1-sol",
               "text-embedding-3-small", "tts-1", "tts-1-hd", "claude-haiku-5-5", "claude-sonnet-5-5"]
-    WAV = b"RIFF\x24\x00\x00\x00WAVEfmt fake-audio"
+    WAV = _tone()  # a real (short, quiet) WAV clip, so the voice code can check and play it
 
     def __init__(self, key: str = "sk-test-1234567890"):
         self.key = key
         self.reply = "[happy] Ehehe, hi there~"
         self.status = 200  # set to 401 / 429 / 500 to pretend something failed
         self.error = "pretend failure"  # the message that comes with it
+        self.require_key = True  # False: like a server on your own PC (Kokoro), no key needed
+        self.voices = [{"id": "af_bella"}, {"id": "jf_alpha"}, {"id": "af_heart"}]
         self.requests: list[dict] = []
         self.headers: list[dict] = []  # headers of each POST (to check how the key was sent)
         fake = self
@@ -36,7 +49,7 @@ class FakeOpenAI:
             def _check(self):
                 bearer = self.headers.get("Authorization") == f"Bearer {fake.key}"
                 anthropic = self.headers.get("x-api-key") == fake.key and self.headers.get("anthropic-version")
-                if not (bearer or anthropic):
+                if fake.require_key and not (bearer or anthropic):
                     self._send(401, {"error": {"message": "Incorrect API key provided"}})
                     return False
                 if fake.status != 200:
@@ -45,7 +58,11 @@ class FakeOpenAI:
                 return True
 
             def do_GET(self):
-                if self._check():
+                if not self._check():
+                    return
+                if self.path.endswith("/audio/voices"):  # like Kokoro-FastAPI
+                    self._send(200, {"voices": fake.voices})
+                else:
                     self._send(200, {"data": [{"id": m} for m in fake.MODELS]})
 
             def do_POST(self):
