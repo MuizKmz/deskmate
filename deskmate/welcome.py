@@ -10,6 +10,14 @@ from .glass import GlassWindow, button_style, css, label_style
 from .menu_style import INK
 
 WHATS_NEW = {
+    "0.9.0": [
+        ("🎵", "She dances", "When Spotify or YouTube Music plays, she dances, on the beat. Or right-click › Play › "
+                            "Dance!"),
+        ("💗", "Your bond", "Grows with pats, chats, focus and games. She gets a little closer as it does."),
+        ("🎀", "Outfits", "A bow, cat ears, headphones, a crown... unlocked by your bond. Party hat on your "
+                         "birthday!"),
+        ("🎮", "Mini-games", "Rock, paper, scissors, tic-tac-toe and hide and seek (right-click › Play)."),
+    ],
     "0.8.0": [
         ("🍅", "Focus timer", "Right-click her › Focus. She keeps quiet, counts down, cheers at the end, and nudges you "
                              "if you drift off to YouTube."),

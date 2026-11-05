@@ -165,6 +165,72 @@
     "wrapup": [
       "Here's your day~ You did a lot, you know.",
       "Let me tell you about your day~"
+    ],
+    "bond_up": [
+      "Ehehe... we're {level} now. I'm really glad~",
+      "{level}... I like the sound of that."
+    ],
+    "random_close": [
+      "I like it here, next to you~",
+      "You know... you're my favourite person to keep company.",
+      "Mm, it's nice. Just being here with you."
+    ],
+    "dance": [
+      "Ooh, this one~ ♪ I have to dance!",
+      "Mmh~ ♪ this song is so nice...",
+      "*sways* ♪"
+    ],
+    "rps_start": [
+      "Rock, paper, scissors~ ready? Go!",
+      "Jan-ken-pon! Pick one~"
+    ],
+    "rps_win": [
+      "Mou... you got me.",
+      "Hmph, lucky~"
+    ],
+    "rps_lose": [
+      "Ehehe~ I win this round!",
+      "Yay, mine!"
+    ],
+    "rps_draw": [
+      "Same! Again again~",
+      "Ah, we think alike."
+    ],
+    "rps_you_won": [
+      "You win... okay, you're good at this.",
+      "Fine, you win~ but next time I'll get you!"
+    ],
+    "rps_she_won": [
+      "I win~! Rematch? Ehehe.",
+      "Victory~ Want to try again?"
+    ],
+    "ttt_start": [
+      "Tic-tac-toe~ You go first, okay?",
+      "I'm ♡, you're ✕. Your move~"
+    ],
+    "ttt_win": [
+      "You won?! Mou... one more!",
+      "Okay, okay, you're clever~"
+    ],
+    "ttt_lose": [
+      "Ehehe~ I win!",
+      "Got you~"
+    ],
+    "ttt_draw": [
+      "A draw~ We're a good match.",
+      "Nobody wins... let's go again?"
+    ],
+    "hide_start": [
+      "Hide and seek! Close your eyes~ count to five...",
+      "I'm going to hide! Don't peek~"
+    ],
+    "hide_found": [
+      "Ah! You found me~ How did you know?",
+      "Kyaa! Found me... ehehe."
+    ],
+    "hide_timeout": [
+      "Here I am~ You didn't find me! I win~",
+      "Pfft, I was right here the whole time~"
     ]
   },
   "head": {

@@ -1465,6 +1465,179 @@ class QtSmokeTests(unittest.TestCase):
             self.assertTrue((Path(home) / "daylog.json").is_file())
             controller.companion.close()
 
+    def test_more_alive_bond_outfits_dancing_games(self):
+        import random
+        from datetime import datetime
+        from unittest import mock
+
+        from PySide6.QtWidgets import QPushButton
+
+        from deskmate.activity import make_activity, music_from
+        from deskmate.app import Controller
+        from deskmate.brain import Brain
+        from deskmate.character import load_pack
+        from deskmate.companion import load_frames
+        from deskmate.settings import Settings
+
+        def chip(chips, text):
+            for button in chips.findChildren(QPushButton):
+                if button.text() == text:
+                    return button
+            self.fail(f"no {text!r} chip in {[b.text() for b in chips.findChildren(QPushButton)]}")
+
+        def wait(condition, seconds=5):
+            deadline = time.monotonic() + seconds
+            while not condition() and time.monotonic() < deadline:
+                spin(0.05)
+
+        with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)):
+            settings = Settings(Path(home) / "settings.json")
+            settings["perch"] = False  # never sit on the test machine's real windows
+            settings["update_check"] = False  # no real GitHub calls in tests
+            pack = load_pack(self.root)
+            brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5),
+                          wallclock=lambda: datetime(2026, 11, 5, 14, 0))
+            controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
+            controller._read_activity = lambda: None
+            song = music_from(make_activity("spotify.exe", "YOASOBI - Idol"))
+            playing = [None]
+            controller._read_music = lambda: playing[0]
+            controller.start()
+            fun = controller.fun
+
+            def quiet():
+                brain._speech_until = 0
+                controller.bubble.dismiss()
+
+            # The bond: a visit a day, pats (only 10 a day count), chats; a level-up with a gift.
+            fun.tick(time.monotonic())
+            self.assertEqual(fun.level().points, 4)  # today's visit
+            for _ in range(30):
+                controller._on_click()
+            self.assertEqual(fun.level().points, 14)
+            self.assertEqual(brain.bond_level, 1)
+            with mock.patch("PySide6.QtCore.QTimer.singleShot", lambda ms, f: f()):
+                fun.add_bond("chat")  # 17
+                fun.add_bond("focus")  # 22
+                quiet()
+                fun.add_bond("chat")  # 25: level 2!
+            self.assertEqual(fun.level().number, 2)
+            self.assertEqual(brain.bond_level, 2)
+            self.assertIn("Getting to know you", controller.bubble.text)
+            self.assertIn("Flower clip", controller.bubble.text)  # her new outfit
+            self.assertIn("Getting to know you", fun.context())
+            controller.menu.aboutToShow.emit()
+            self.assertIn("Lv 2", controller.menu_header.status.text())
+
+            # Outfits: unlocked ones in the menu, locked ones greyed out.
+            labels = {a.text(): a for a in controller.outfit_menu.actions()}
+            self.assertTrue(labels["🌸  Flower clip"].isEnabled())
+            self.assertFalse(labels["🔒  Cat ears  (bond Lv 3)"].isEnabled())
+            labels["🌸  Flower clip"].trigger()
+            self.assertEqual((settings["outfit"], controller.companion.outfit), ("flower", "flower"))
+            spin(0.1)
+            settings["birthday"] = "11-05"
+            fun.apply_outfit()
+            self.assertEqual(controller.companion.outfit, "party_hat")  # it's your birthday!
+            settings["outfit_seasonal"] = False
+            fun.apply_outfit()
+            self.assertEqual(controller.companion.outfit, "flower")
+            settings["outfit"] = "crown"  # (not unlocked)
+            fun.apply_outfit()
+            self.assertIsNone(controller.companion.outfit)
+            settings["outfit"] = "flower"
+            fun.apply_outfit()
+
+            # Dancing: music starts -> she dances (on the beat); music stops -> she stops.
+            levels = iter([0.9 if i % 12 == 0 else 0.1 for i in range(10_000)])
+            fun.read_level = lambda: next(levels)
+            playing[0] = song
+            fun._music_polled = -1e9
+            fun.tick(time.monotonic())
+            self.assertTrue(controller.companion.dancing)
+            wait(lambda: len(fun.tracker.onsets) >= 2, 3)
+            self.assertGreaterEqual(len(fun.tracker.onsets), 2)  # it hears the beat
+            self.assertGreater(fun.level().points, 25)  # dancing together counts
+            controller.menu.aboutToShow.emit()
+            self.assertIn("dancing", controller.menu_header.status.text())
+            playing[0] = None
+            for _ in range(3):
+                fun._music_polled = -1e9
+                fun.tick(time.monotonic())
+            self.assertFalse(controller.companion.dancing)
+            settings["dance"] = False
+            playing[0] = song
+            fun._music_polled = -1e9
+            fun.tick(time.monotonic())
+            self.assertFalse(controller.companion.dancing)  # switched off
+            playing[0] = None
+            controller.act_dance.trigger()  # "Dance!" from the menu: even without music
+            self.assertTrue(controller.companion.dancing)
+            fun._demo_until = time.monotonic() - 1
+            fun.tick(time.monotonic())
+            self.assertFalse(controller.companion.dancing)
+
+            # Rock, paper, scissors: best of three, with answer chips.
+            quiet()
+            controller.act_rps.trigger()
+            self.assertTrue(fun.chips.isVisible())
+            for _ in range(20):
+                if fun.rps is None:
+                    break
+                chip(fun.chips, "✊ Rock").click()
+            self.assertIsNone(fun.rps)
+            self.assertRegex(controller.bubble.text, r"\(\d–\d\)")
+            self.assertIn("Again!", [b.text() for b in fun.chips.findChildren(QPushButton) if b.isVisible()])
+
+            # Tic-tac-toe in its own window.
+            controller.act_ttt.trigger()
+            board = fun.board
+            self.assertTrue(board.isVisible())
+            while board.game.result is None:
+                board.cells[next(i for i in range(9) if not board.game.board[i])].click()
+            self.assertIn(board.status.text().split()[0], ("You", pack.name, "A"))
+            self.assertTrue(all(not c.isEnabled() for c in board.cells))
+            board.restart()
+            self.assertEqual(board.game.board, [""] * 9)
+            board.close()
+
+            # Hide and seek: she hides at the screen's edge; click her to find her.
+            home_pos = controller.companion.pos()
+            controller.act_hide.trigger()
+            fun._hide()
+            wait(lambda: controller.companion.windowOpacity() > 0.95 and controller.companion.pos() != home_pos, 3)
+            avail = controller.companion.available_rect()
+            sprite = controller.companion._sprite_rect_local().translated(controller.companion.pos())
+            self.assertFalse(avail.contains(sprite))  # partly off the screen: peeking
+            self.assertTrue(avail.intersects(sprite))
+            points = fun.level().points
+            pats = brain._pets.copy()
+            controller._on_click()
+            self.assertIsNone(fun.hiding)
+            self.assertIn("found", controller.bubble.text)
+            self.assertEqual(brain._pets, pats)  # (finding her isn't a pat)
+            self.assertGreater(fun.level().points, points)
+            wait(lambda: controller.companion.pos() == controller.companion.clamped_pos(home_pos), 3)
+            controller.act_hide.trigger()
+            fun.hiding["until"] = time.monotonic() - 1  # nobody found her
+            fun.tick(time.monotonic())
+            self.assertIn("win", controller.bubble.text)
+
+            # Settings › Fun.
+            controller.open_settings("fun")
+            window = controller._settings_window
+            self.assertIn("Getting to know you", window.bond_info.text())
+            self.assertGreater(window.bond_bar.value(), 0)
+            self.assertEqual(window.outfit.currentData(), "flower")
+            window.outfit.setCurrentIndex(window.outfit.findData("bow"))
+            window.outfit.activated.emit(window.outfit.currentIndex())
+            self.assertEqual(controller.companion.outfit, "bow")
+            window.close()
+
+            controller._on_about_to_quit()
+            self.assertTrue((Path(home) / "bond.json").is_file())
+            controller.companion.close()
+
     def test_settings_window_setup_and_whats_new(self):
         import random
         from unittest import mock
@@ -1512,7 +1685,7 @@ class QtSmokeTests(unittest.TestCase):
             self.assertTrue(window.isVisible())
             self.assertFalse(news.isVisible())
             tabs = [window.tabs.item(i).text() for i in range(window.tabs.count())]
-            self.assertEqual(tabs, ["General", "Chat", "Voice", "Buddy", "My day", "Memory", "About"])
+            self.assertEqual(tabs, ["General", "Chat", "Voice", "Buddy", "My day", "Fun", "Memory", "About"])
             gravity = window._switches["gravity"]
             self.assertEqual(gravity.isChecked(), settings["gravity"])
             gravity.click()
@@ -1528,7 +1701,7 @@ class QtSmokeTests(unittest.TestCase):
             window.refresh()
             self.assertIn("1 thing about you", window.memory_info.text())
             window.show_tab("about")
-            self.assertEqual(window.pages.currentIndex(), 6)
+            self.assertEqual(window.pages.currentIndex(), 7)
             window.close()
 
             # Setup: choose a voice, try buddy mode (you can say no), finish.

@@ -79,6 +79,23 @@ DEFAULT_LINES: dict[str, list[str]] = {
     "friday": ["It's Friday~ Almost the weekend!"],
     # Evening wrap-up
     "wrapup": ["Here's your day~"],
+    # More alive: bond, dancing, games
+    "bond_up": ["We're {level} now~ Hehe, I'm happy."],
+    "random_close": ["I like spending my days with you~", "Hey... thanks for keeping me around."],
+    "dance": ["Ooh, this song~ ♪", "I can't help it, I have to dance!"],
+    "rps_start": ["Rock, paper, scissors... go!"],
+    "rps_win": ["Aww, you got me."],
+    "rps_lose": ["Hehe, I win this one!"],
+    "rps_draw": ["Same! Again~"],
+    "rps_you_won": ["You win the game! Good one~"],
+    "rps_she_won": ["I win the game~ Rematch?"],
+    "ttt_start": ["Tic-tac-toe! You go first~"],
+    "ttt_win": ["You won! I'll get you next time..."],
+    "ttt_lose": ["I won~ Hehe!"],
+    "ttt_draw": ["A draw! We're too good."],
+    "hide_start": ["Hide and seek! Close your eyes... I'm hiding!"],
+    "hide_found": ["Ah! You found me~"],
+    "hide_timeout": ["Here I am~ You didn't find me! I win!"],
 }
 
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")

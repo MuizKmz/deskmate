@@ -37,6 +37,7 @@ CHATTER_MIN, CHATTER_MAX = 6 * 60, 14 * 60  # random chit-chat interval
 WANDER_MIN, WANDER_MAX = 45, 140  # she strolls along the taskbar now and then
 WANDER_LINE_CHANCE = 0.25
 BIG_FALL = 1500.0  # landing speed (px/s) that earns an "ouch"
+CLOSE_LEVEL, CLOSE_CHANCE = 4, 0.3  # bond level for her closer chit-chat, and how often
 LATE_HOURS = range(0, 5)  # midnight to 5 am counts as "late"
 BEDTIME_FROM = 23  # from 11 pm, if you're still working, she nudges you to sleep...
 BEDTIME_EVERY = 45 * 60  # ...every 45 minutes
@@ -108,6 +109,7 @@ class Brain:
         self._speech_until = -1e9
         self._chatting_until = -1e9  # quiet time while you're chatting with her
         self.focus_until = -1e9  # a focus session: no chit-chat, walks or care reminders until then
+        self.bond_level = 1  # how close you two are (bond.py); from level 4 she sometimes says closer things
         self._speech: list[Speech] = []
         self._animations: list[str] = []
 
@@ -452,7 +454,9 @@ class Brain:
         if self.chatty and self.base == "idle" and user_active and not chatting and now >= self._next_chatter:
             self._next_chatter = now + self.rng.uniform(CHATTER_MIN, CHATTER_MAX)
             if not self._speaking(now) and not self._dragging:
-                self._say("random", now)
+                close = self.bond_level >= CLOSE_LEVEL and self.rng.random() < CLOSE_CHANCE
+                if not (close and self._say("random_close", now, "blush")):
+                    self._say("random", now)
 
         # A little stroll along the taskbar (the window decides if it's possible right now).
         if self.wander and self.base == "idle" and user_active and not chatting and now >= self._next_wander:

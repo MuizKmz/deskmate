@@ -54,6 +54,9 @@ from .settings import SIZES
 log = logging.getLogger(__name__)
 
 FADE_SECONDS = 0.18
+DANCE_MS = 33  # frame interval while dancing
+DANCE_BOUNCE = 0.035  # how high she bounces while dancing (of her height)
+DANCE_LEAN_DEG = 4.0  # how far she sways
 HOP_SECONDS, HOP_HEIGHT = 0.42, 0.075  # height as a fraction of her height
 LAND_SECONDS = 0.40
 SHAKE_SECONDS = 0.45
@@ -139,6 +142,28 @@ def _clamp(value: float, low: float, high: float) -> float:
 
 
 # ------------------------------------------------------------------------ window
+def pixel_block(image: QImage) -> int:
+    """Pixel art is often stored big (every art pixel a 20x20 square). How big are the squares?
+    (The greatest common divisor of the colour runs along a few rows.)"""
+    import math as _math
+
+    block = 0
+    for row in range(image.height() // 5, image.height(), max(1, image.height() // 5)):
+        run, previous = 0, None
+        for x in range(image.width()):
+            color = image.pixel(x, row)
+            if color == previous:
+                run += 1
+                continue
+            if previous is not None:
+                block = _math.gcd(block, run)
+            previous, run = color, 1
+        block = _math.gcd(block, run)
+        if block == 1:
+            break
+    return max(1, block)
+
+
 class Companion(QWidget):
     clicked = Signal()
     dragStarted = Signal()
@@ -172,6 +197,8 @@ class Companion(QWidget):
         self._cache: dict[tuple[str, int, bool], QPixmap] = {}
         self._cache_dpr = 0.0
 
+        self._outfit: str | None = None  # an accessory on her head (outfits.py), or None
+        self._groove = None  # dance.Groove while she dances to your music
         self._requested = "idle"  # what the brain asked for
         self._mouth = None  # voice.Mouth while she's saying a line (moves her lips on the talk frames)
         self._expr = "idle"  # what is actually shown
@@ -220,6 +247,7 @@ class Companion(QWidget):
         self._ref_w, self._ref_h = reference.width(), reference.height()
         self._accent = QColor(pack.theme.get("accent", "#C9A0DC")).darker(135)
         self._pixel_art = pack.meta.get("smooth") is False  # keep pixel art crisp
+        self._block = pixel_block(reference) if self._pixel_art else 1  # one "pixel" of hers, in image pixels
         self.setWindowTitle(f"DeskMate - {pack.name}")
 
     def set_pack(self, pack: CharacterPack, frames: dict[str, list[QImage]]) -> None:
@@ -467,6 +495,30 @@ class Companion(QWidget):
     def mouth_open(self, now: float | None = None) -> bool:
         return self._mouth is not None and self._mouth.state(self._clock() if now is None else now) == "open"
 
+    def set_outfit(self, key: str | None) -> None:
+        if key != self._outfit:
+            self._outfit = key
+            self.update()
+
+    @property
+    def outfit(self) -> str | None:
+        return self._outfit
+
+    def set_groove(self, groove) -> None:
+        """Start dancing (a dance.Groove), or stop (None)."""
+        self._groove = groove
+        self._kick()
+
+    @property
+    def dancing(self) -> bool:
+        return self._groove is not None
+
+    def _dance_pose(self, now: float) -> tuple[float, float]:
+        """(bounce 0..1, lean -1..1) right now; (0, 0) when she isn't dancing (or can't: carried, falling...)."""
+        if self._groove is None or self._dragging or self._falling or self._walk is not None or self._sleeping:
+            return 0.0, 0.0
+        return self._groove.pose(now)
+
     def set_expression(self, name: str) -> None:
         self._requested = name
         self._sleeping = name == "sleep"
@@ -631,7 +683,8 @@ class Companion(QWidget):
             self._mouth = None  # she finished the line
         self._show(self._effective())
         self._update_blink(now)
-        self._timer.setInterval(FAST_MS if self._busy(now) else CALM_MS)
+        # (Dancing lasts whole songs: 30 frames a second is smooth enough and kinder to your CPU.)
+        self._timer.setInterval(FAST_MS if self._busy(now) else DANCE_MS if self._groove is not None else CALM_MS)
         self.update()
 
     # --------------------------------------------------------------- physics
@@ -738,6 +791,16 @@ class Companion(QWidget):
         t = self._progress("shake", now, SHAKE_SECONDS)
         if t is not None:
             dx += math.sin(t * math.pi * 8) * self._W * 0.025 * (1 - t)
+        bounce, lean = self._dance_pose(now)
+        if bounce or lean:  # dancing: up between the beats, down on them, swaying side to side
+            lift = self._H * DANCE_BOUNCE * bounce
+            if self._pixel_art:
+                dy -= round(lift / 2) * 2
+                dx += round(lean * self._W * 0.03)
+            else:
+                dy -= lift
+                sy *= 1 + 0.025 * bounce
+                sx *= 1 - 0.015 * bounce
         return sx, sy, dx, dy
 
     # ------------------------------------------------------------- painting
@@ -821,15 +884,36 @@ class Companion(QWidget):
             painter.translate(self._pivot)
             painter.rotate(self._swing)
             painter.translate(-self._pivot)
+        _bounce, lean = self._dance_pose(now)
+        if lean and not self._pixel_art:
+            painter.rotate(lean * DANCE_LEAN_DEG)  # (around her feet)
         painter.scale(sx, sy)
         pixmap = self._current_pixmap(now)
         dpr = pixmap.devicePixelRatio() or 1.0
         painter.drawPixmap(QPointF(-pixmap.width() / dpr / 2, -pixmap.height() / dpr), pixmap)
+        if self._outfit:
+            self._draw_outfit(painter)
         painter.restore()
 
         if self._sleeping:
             self._draw_zzz(painter, now)
         painter.end()
+
+    def _draw_outfit(self, painter: QPainter) -> None:
+        """Her accessory, in the same (moving, breathing) coordinates as her picture: feet at (0, 0)."""
+        from .outfits import draw
+
+        head = self._head_local()
+        feet = self._feet_local()
+        mirrored = self._mirrored(self._expr)
+        center = head.center() - feet
+        if mirrored:
+            center.setX(-center.x())
+        try:
+            draw(painter, self._outfit, center, head.width() / 2, QColor(self.pack.theme.get("accent", "#C9A0DC")),
+                 mirrored, self._scale * self._block if self._pixel_art else 0.0)
+        except Exception:  # a broken accessory must never stop her being drawn
+            self._outfit = None
 
     def _draw_zzz(self, painter: QPainter, now: float) -> None:
         head = self._head_local()

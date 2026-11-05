@@ -23,7 +23,7 @@ from .menu_style import icon as _icon
 
 REPO_URL = "https://github.com/MuizKmz/deskmate"
 TABS = [("general", "General", "settings"), ("chat", "Chat", "chat"), ("voice", "Voice", "sparkle"),
-        ("buddy", "Buddy", "eye"), ("day", "My day", "chart"), ("memory", "Memory", "heart"),
+        ("buddy", "Buddy", "eye"), ("day", "My day", "chart"), ("fun", "Fun", "game"), ("memory", "Memory", "heart"),
         ("about", "About", "sun")]
 COUNTRIES = [("auto", "Automatic (from Windows)"), ("MY", "Malaysia"), ("SG", "Singapore"), ("ID", "Indonesia"),
              ("BN", "Brunei"), ("TH", "Thailand"), ("PH", "Philippines"), ("JP", "Japan"), ("KR", "South Korea"),
@@ -295,6 +295,58 @@ class SettingsWindow(GlassWindow):
         column.addStretch(1)
         return page
 
+    def _page_fun(self) -> QWidget:
+        from PySide6.QtWidgets import QProgressBar
+
+        c, name = self.c, self.c.pack.name
+        page, column = self._page("Fun")
+        self._heading(column, f"💗 You and {name}")
+        self.bond_info = self._info(column)
+        self.bond_bar = QProgressBar()
+        self.bond_bar.setRange(0, 1000)
+        self.bond_bar.setTextVisible(False)
+        self.bond_bar.setFixedHeight(8)
+        self.bond_bar.setStyleSheet(f"QProgressBar {{ background: rgba(255,255,255,0.08); border: none;"
+                                    f" border-radius: 4px; }} QProgressBar::chunk {{ background: {css(self.accent)};"
+                                    " border-radius: 4px; }")
+        column.addWidget(self.bond_bar)
+        hint = QLabel("Grows with pats, chats, focus sessions, games and dancing together. It never goes down.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(label_style(8.5, 0.55))
+        column.addWidget(hint)
+
+        self._heading(column, "🎀 Outfit")
+        self.outfit = self._combo([("", "Nothing")], self._set_outfit)
+        self._row(column, "Wearing", "More unlock as your bond grows.", self.outfit)
+        self._switch(column, "outfit_seasonal", "Dress up on special days",
+                     "A party hat on your birthday, a Santa hat at Christmas, a witch hat on Halloween.",
+                     self._set_seasonal)
+
+        self._heading(column, "🎵 Dancing")
+        self._switch(column, "dance", "Dance to my music",
+                     "When Spotify or YouTube Music is playing. On the beat, if Windows lets her hear how loud it is.",
+                     lambda on: c._set("dance", bool(on)))
+
+        self._heading(column, "🎮 Play")
+        self._buttons(column, self._button("Rock, paper, scissors", c.fun.rock_paper_scissors),
+                      self._button("Tic-tac-toe", c.fun.tic_tac_toe))
+        self._buttons(column, self._button("Hide and seek", self._hide_and_seek),
+                      self._button("Dance!", c.fun.dance))
+        column.addStretch(1)
+        return page
+
+    def _set_outfit(self, key: str) -> None:
+        self.c.fun.set_outfit(key)
+        self.refresh()
+
+    def _set_seasonal(self, on: bool) -> None:
+        self.c._set("outfit_seasonal", bool(on))
+        self.c.fun.apply_outfit()
+
+    def _hide_and_seek(self) -> None:
+        self.close()  # (out of the way: she needs the screen)
+        self.c.fun.hide_and_seek()
+
     def _page_memory(self) -> QWidget:
         c = self.c
         page, column = self._page("Memory")
@@ -335,6 +387,34 @@ class SettingsWindow(GlassWindow):
     def _set_voice(self, mode: str) -> None:
         self.c._set_voice(mode)
         self.refresh()
+
+    def _refresh_fun(self) -> None:
+        from .outfits import OUTFITS
+
+        c, s = self.c, self.c.settings
+        level = c.fun.level()
+        days = c.fun.bond.days_together(c.pack.id, c.fun.today())
+        self.bond_info.setText(f"{level.name}  ·  level {level.number}"
+                               + (f"  ·  {level.next_at - level.points} points to the next" if level.next_at else "")
+                               + f"\nTogether for {days} day{'s' if days != 1 else ''}")
+        self.bond_bar.setValue(int(level.progress * 1000))
+        self.outfit.blockSignals(True)
+        self.outfit.clear()
+        self.outfit.addItem("Nothing", "")
+        model = self.outfit.model()
+        for outfit in OUTFITS:
+            if not outfit.level:
+                continue
+            locked = outfit.level > level.number
+            self.outfit.addItem(f"🔒 {outfit.name} (Lv {outfit.level})" if locked else f"{outfit.emoji} {outfit.name}",
+                                outfit.key)
+            if locked:
+                model.item(self.outfit.count() - 1).setEnabled(False)
+        index = self.outfit.findData(s["outfit"])
+        if index < 0 or not model.item(index).isEnabled():
+            index = 0  # (not unlocked with this character)
+        self.outfit.setCurrentIndex(index)
+        self.outfit.blockSignals(False)
 
     def _toggle_focus(self) -> None:
         if self.c.day.focus is not None:
@@ -420,6 +500,7 @@ class SettingsWindow(GlassWindow):
                             (self.city, s["weather_city"])):
             if not edit.hasFocus():
                 edit.setText(value)
+        self._refresh_fun()
         focus = c.day.focus
         self.focus_button.setText("Start focusing" if focus is None else
                                   f"Stop ({focus.clock(time.monotonic())} left)" if focus.focusing else "End the break")

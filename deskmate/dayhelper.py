@@ -189,9 +189,9 @@ def system_country() -> str:
 
 
 class DayHelper:
-    def __init__(self, controller):
+    def __init__(self, controller, folder=None):
         self.c = controller
-        self.log = DayLog(data_dir() / "daylog.json")
+        self.log = DayLog((folder or data_dir()) / "daylog.json")
         self.focus: Focus | None = None
         self.pill: FocusPill | None = None
         self.chips = None
@@ -320,6 +320,9 @@ class DayHelper:
         event = focus.step(now)
         if event == "done":
             self.log.add_focus(self.today(), focus.minutes, True)
+            fun = getattr(self.c, "fun", None)
+            if fun is not None:
+                fun.add_bond("focus")
             brain = self.c.brain
             brain.focus_until = -1e9
             brain._active_since = now  # the break counts as a break

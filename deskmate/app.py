@@ -242,7 +242,11 @@ class Controller:
         self.speaker = self._make_speaker()
         from .dayhelper import DayHelper
 
-        self.day = DayHelper(self)  # focus timer, wrap-up, special days, weather, stuck helper
+        self.day = DayHelper(self, data_dir())  # focus timer, wrap-up, special days, weather, stuck helper
+        from .fun import FunHelper
+
+        self.fun = FunHelper(self, data_dir())  # dancing, your bond, outfits, mini-games
+        self.brain.bond_level = self.fun.level().number
         self._update = None  # a newer release, if GitHub has one
         self._update_worker = None
 
@@ -333,6 +337,7 @@ class Controller:
             except Exception:  # buddy mode must never break her
                 log.exception("Watching failed")
         self.day.tick(now)
+        self.fun.tick(now)
         self._apply(now)
 
     def _apply(self, now: float) -> None:
@@ -365,6 +370,9 @@ class Controller:
 
     # ------------------------------------------------------------- reactions
     def _on_click(self) -> None:
+        if self.fun.on_click():  # (found her in hide and seek: not a pat)
+            return
+        self.fun.add_bond("pet")
         self._event(self.brain.on_pet)
 
     def _on_drag_end(self) -> None:
@@ -454,13 +462,14 @@ class Controller:
             watch.replies.hide()
         self.brain.on_chat_sent(now)
         self.day.note_chat()
+        self.fun.add_bond("chat")
         self._apply(now)
         self.bubble.say("...", 60, self.companion.head_rect_global(), self.companion.available_rect())
         self._set_chat_waiting(True)
         if self._chat_log is not None:
             self._chat_log.add_pending(text, datetime.now().strftime("%H:%M"), image=with_picture)
         worked = (now - self.brain._active_since) / 60.0
-        context = situation(datetime.now(), self.brain.label(now), worked) + self._memory_context() + self._voice_context()
+        context = situation(datetime.now(), self.brain.label(now), worked) + self._memory_context() + self.fun.context() + self._voice_context()
         if watch is not None:
             context += "\n" + self._watch_context(activity)
         session = self.chat
@@ -806,7 +815,7 @@ class Controller:
                                                  "happy"))
 
     def _our_windows(self) -> list:
-        windows = [self.companion, self.bubble, self._chat_box, self._chat_log] + self.day.windows()
+        windows = [self.companion, self.bubble, self._chat_box, self._chat_log] + self.day.windows() + self.fun.windows()
         if self.watch is not None:
             windows += [self.watch.badge, self.watch.replies]
         return [w for w in windows if w is not None]
@@ -880,7 +889,7 @@ class Controller:
             self._chat_worker = Background()
         now = time.monotonic()
         context = (situation(datetime.now(), self.brain.label(now), (now - self.brain._active_since) / 60.0)
-                   + self._memory_context() + self._voice_context())
+                   + self._memory_context() + self.fun.context() + self._voice_context())
         session = self.chat
         music = activity.kind == "music"
         log.info("Buddy mode: asking her about %s", "the song" if music else activity.app)
@@ -1133,8 +1142,15 @@ class Controller:
         self.act_chat_log = action("Today's chat", self.open_chat_log, "clock")
         self.act_look = action("Watch with me...", self.toggle_watching, "eye")
         self.act_memory = action("What I remember about you", self.open_memory, "heart")
-        self.act_talk = action("Talk to me", lambda: self._event(self.brain.on_talk_request), "sparkle")
-        self.act_walk = action("Take a walk", self.take_walk, "walk")
+        self.play_menu = submenu(menu, "Play", "game")
+        self.act_rps = action("Rock, paper, scissors", lambda: self.fun.rock_paper_scissors(), parent=self.play_menu)
+        self.act_ttt = action("Tic-tac-toe", lambda: self.fun.tic_tac_toe(), parent=self.play_menu)
+        self.act_hide = action("Hide and seek", lambda: self.fun.hide_and_seek(), parent=self.play_menu)
+        self.act_dance = action("Dance!", lambda: self.fun.dance(), parent=self.play_menu)
+        self.play_menu.addSeparator()
+        self.act_talk = action("Talk to me", lambda: self._event(self.brain.on_talk_request), parent=self.play_menu)
+        self.act_walk = action("Take a walk", self.take_walk, parent=self.play_menu)
+        self.outfit_menu = submenu(menu, "Outfit", "bow")
         self.focus_menu = submenu(menu, "Focus", "timer")
         self.act_focus = [action(f"Focus {m} minutes", functools.partial(self._start_focus, m), parent=self.focus_menu)
                           for m in FOCUS_LENGTHS]
@@ -1223,6 +1239,7 @@ class Controller:
 
         QTimer.singleShot(0, self._rebuild_menu)
         self.stop_watching("switch")  # a new character asks for her own permission
+        self.fun.switched_character()  # (her own bond, and what she's wearing)
         self._set("character", pack.id)
         self.chat = self._make_chat()
         for attr in ("_chat_box", "_chat_log", "_memory_window", "_settings_window"):
@@ -1233,8 +1250,34 @@ class Controller:
                 setattr(self, attr, None)
         self._event(self.brain.on_start)
 
+    def _fill_outfit_menu(self) -> None:
+        """Her outfits: the ones your bond unlocked, and the next ones (locked, with the level they need)."""
+        from PySide6.QtGui import QAction
+
+        from .outfits import OUTFITS
+
+        menu = self.outfit_menu
+        menu.clear()
+        level = self.fun.level().number
+        chosen = self.settings["outfit"]
+        for key, label in [("", "Nothing")] + [(o.key, f"{o.emoji}  {o.name}") for o in OUTFITS if o.level]:
+            outfit = next((o for o in OUTFITS if o.key == key), None)
+            locked = outfit is not None and outfit.level > level
+            act = QAction(label if not locked else f"🔒  {outfit.name}  (bond Lv {outfit.level})", menu)
+            act.setCheckable(not locked)
+            act.setChecked(key == chosen and not locked)
+            act.setEnabled(not locked)
+            act.triggered.connect(functools.partial(self._choose_outfit, key))
+            menu.addAction(act)
+        self._mark_choices([a for a in menu.actions() if a.isCheckable()])
+
+    def _choose_outfit(self, key: str, _checked: bool = False) -> None:
+        self.fun.set_outfit(key)
+        self._settings_changed()
+
     def _refresh_menu(self) -> None:
         self._fill_character_menu()
+        self._fill_outfit_menu()
         self._fill_reminders_menu()
         from PySide6.QtGui import QColor
 
@@ -1257,6 +1300,9 @@ class Controller:
         status = self.brain.label(time.monotonic()) if visible else "hiding"
         if self.day.focusing:
             status = "focusing with you"
+        elif self.companion.dancing:
+            status = "dancing ♪"
+        status += f"  ·  💗 Lv {self.fun.level().number}"
         if count:
             status += f"  ·  {count} reminder{'s' if count > 1 else ''}"
         self.menu_header.set_text(self.pack.name, status)
@@ -1586,8 +1632,9 @@ class Controller:
         self.stop_watching("quit")
         try:
             self.day.shutdown()  # (writes the day's log)
+            self.fun.shutdown()  # (stops dancing; back from hiding)
         except Exception:
-            log.exception("Couldn't save the day's log")
+            log.exception("Couldn't wrap up the day / fun helpers")
         for window in (self._chat_box, self._chat_log, self._memory_window, getattr(self, "_settings_window", None),
                        getattr(self, "_setup", None), getattr(self, "_whats_new", None)):
             if window is not None:

@@ -580,6 +580,22 @@ A few details worth stealing:
 - **Holidays without a state.** In the `holidays` package, Deepavali isn't a *national* holiday in Malaysia (one state doesn't have it), so with no state set it would be missed. When there's no state, a holiday that more than half of the states have counts too. And "observed"/"in lieu" days off are skipped: the day off isn't the festival.
 - **The weather answers everyone.** Settings' *Check now* and her morning line may ask at the same time; the second asker is added to a waiting list and gets the same answer, instead of a second request.
 
+### More alive: dancing on the beat, a bond, outfits, games
+
+Phase 9 follows the same split (pure rules, one Qt helper: `fun.py`), with three new tricks.
+
+**Hearing the beat without hearing the music.** Windows keeps a *peak meter* for your speakers: the number that moves the green bar in the volume mixer. `audiometer.py` reads it through Core Audio's COM interfaces with nothing but `ctypes` (no package to install): create an `IMMDeviceEnumerator`, ask for the default speakers, `Activate` an `IAudioMeterInformation`, and call `GetPeakValue`. A COM object is a pointer to a table of functions, so calling method number 3 is "read entry 3 of the table, give it the right signature with `WINFUNCTYPE`, and call it with the object as the first argument". It's one number, 25 times a second; never the sound.
+
+`dance.BeatTracker` turns those numbers into beats: a reading clearly louder than the last 1.5 seconds' average (×1.35) is a beat, but never two closer than 0.28 s. The *median* gap between recent beats is the tempo (folded into 70–180 BPM, because a detector often hears every other beat), and the tempo glides to new values instead of jumping. Between loud beats the dance keeps a steady grid (`anchor + k × 60 / bpm`), so she doesn't freeze in a quiet bar. Her pose is two numbers: a bounce (`sin²` of the beat phase, so she's down *on* the beat) and a lean (one sway every two beats), scaled by how loud the music is. If the meter isn't there (another OS, odd drivers), `level()` returns `None` and she grooves at 110 BPM: nothing breaks.
+
+**A bond that can't be farmed.** Every kind of moment has points *and* a daily cap (`DAILY_CAP`), so fifty clicks a day count the same as ten. Points never go down: she's a companion, not a chore. The bond lives per character in `bond.json`, and `bond.prompt()` tells her chat brain how close you are, so the warmth comes from her own words, not a script.
+
+**Outfits drawn in code.** Instead of new pictures for every character, accessories are vector shapes drawn on the head circle the character pack already declares (`head` in `character.json`): each one is drawn for a head of radius 100 and scaled. For pixel art, they're drawn into a tiny image, one dot per *art pixel*, with antialiasing off, then scaled up without smoothing, so Piko's crown sits on her pixel grid. How big is an art pixel? Piko's 32×44 drawing is stored at 20×, so `pixel_block()` takes a few rows of the picture and finds the greatest common divisor of the colour runs: 20.
+
+**Hide and seek** shows a nice property of a frameless window: it can be moved partly off the screen. She fades out, moves so only 38% of her body is inside the screen's edge, fades in, and the click handler checks with the game first (`fun.on_click()`), so finding her isn't counted as a pat.
+
+**Tic-tac-toe** uses minimax, but a perfect player is no fun, so she plays a random move 25% of the time. Two details: scores include how many cells are left (a win *now* beats a win later, so she doesn't play with her food), and positions are cached with `lru_cache` on a tuple of the board, which makes the whole game tree instant.
+
 ---
 
 ## 10 · 📦 Shipping it
@@ -589,7 +605,7 @@ Running from source needs Python. Real users want a download that just works. Th
 ```mermaid
 flowchart LR
     T["git push origin v0.3.0"] --> GA[GitHub Actions<br/>Windows machine]
-    GA --> TS[Run the 174 tests]
+    GA --> TS[Run the 186 tests]
     TS --> PI["PyInstaller<br/>DeskMate.exe + _internal"]
     PI --> CK["DeskMate.exe --check"]
     CK --> IS[Inno Setup<br/>installer]

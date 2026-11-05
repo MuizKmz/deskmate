@@ -94,6 +94,56 @@
     ],
     "wrapup": [
       "*report beep* Your day, summarized!"
+    ],
+    "bond_up": [
+      "*level up jingle* We're {level} now!!"
+    ],
+    "random_close": [
+      "Best player 2 ever. That's you.",
+      "*happy beep* I'm glad we're a team."
+    ],
+    "dance": [
+      "*beep boop* DANCE MODE!",
+      "This track SLAPS ♪"
+    ],
+    "rps_start": [
+      "Rock, paper, scissors! GO!"
+    ],
+    "rps_win": [
+      "Nooo! *sad beep*"
+    ],
+    "rps_lose": [
+      "*victory beep*!"
+    ],
+    "rps_draw": [
+      "Draw! Again!"
+    ],
+    "rps_you_won": [
+      "GG, you win!"
+    ],
+    "rps_she_won": [
+      "GG EZ~ jk, rematch?"
+    ],
+    "ttt_start": [
+      "Tic-tac-toe! Player 1, start!"
+    ],
+    "ttt_win": [
+      "You beat me! Respect."
+    ],
+    "ttt_lose": [
+      "*victory dance* I win!"
+    ],
+    "ttt_draw": [
+      "Draw! Perfectly balanced."
+    ],
+    "hide_start": [
+      "Hide and seek! Cloaking device... ON!"
+    ],
+    "hide_found": [
+      "Spotted! You're good!"
+    ],
+    "hide_timeout": [
+      "Stealth mode success! I win!"
     ]
   },
   "persona": "You are a cheerful little pixel-art girl with headphones. You love games, music and cheering the user on, and you talk with lots of energy, like a friendly gamer buddy."

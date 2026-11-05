@@ -114,6 +114,13 @@ def _path(name: str) -> QPainterPath:
     elif name == "timer":  # a stopwatch: focus
         p.addEllipse(QRectF(4.5, 6, 15, 15)); p.moveTo(10, 2.8); p.lineTo(14, 2.8); p.moveTo(12, 2.8)
         p.lineTo(12, 6); p.moveTo(12, 13.5); p.lineTo(14.8, 10.7); p.moveTo(18.2, 6.6); p.lineTo(19.6, 5.2)
+    elif name == "game":  # a gamepad: play
+        p.addRoundedRect(QRectF(3, 7.5, 18, 10.5), 5, 5); p.moveTo(7.5, 12.7); p.lineTo(10.5, 12.7)
+        p.moveTo(9, 11.2); p.lineTo(9, 14.2); p.addEllipse(QRectF(14.2, 10.4, 1.8, 1.8))
+        p.addEllipse(QRectF(16.4, 12.8, 1.8, 1.8))
+    elif name == "bow":  # a ribbon: outfits
+        p.moveTo(12, 12); p.cubicTo(9, 7, 4, 7, 4, 12); p.cubicTo(4, 17, 9, 17, 12, 12)
+        p.cubicTo(15, 7, 20, 7, 20, 12); p.cubicTo(20, 17, 15, 17, 12, 12); p.addEllipse(QRectF(10.6, 10.6, 2.8, 2.8))
     elif name == "chart":  # bars: my day
         p.moveTo(4, 20); p.lineTo(20, 20); p.addRoundedRect(QRectF(5.5, 12, 3, 6), 1, 1)
         p.addRoundedRect(QRectF(10.5, 7, 3, 11), 1, 1); p.addRoundedRect(QRectF(15.5, 10, 3, 8), 1, 1)

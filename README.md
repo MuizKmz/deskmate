@@ -32,6 +32,9 @@ dozes off when you leave, pouts when you ignore her, and reminds you to drink wa
 | 😴 **Lives with your day** | Gets sleepy when you step away, falls asleep, and wakes up when you come back. Sleepy late at night too. |
 | 😤 **Has feelings** | Pouts if you work for ages without saying hi. One pat and she forgives you. |
 | 💧 **Takes care of you** | Gentle reminders to drink water, stretch, and go to bed when you work past 11 pm (can be switched off). |
+| 🎵 **Dances** | When Spotify or YouTube Music plays, she bobs and sways on the beat (she listens to how loud your PC is, never to the sound itself). |
+| 💗 **Grows closer** | A bond level that grows with pats, chats, focus sessions and games, unlocks outfits (bow, cat ears, headphones, crown...), and makes her a little warmer. |
+| 🎮 **Plays with you** | Rock, paper, scissors, tic-tac-toe, and hide and seek: she hides at the edge of your screen, and you have 30 seconds to find her. |
 | 🍅 **Focuses with you** | "Focus 25 minutes": she keeps quiet, counts down, cheers when you're done, suggests a break, and gives a gentle nudge if you drift off to YouTube. |
 | 🌙 **Wraps up your day** | In the evening she tells you about your day: hours at the PC, where the time went, focus, songs. Plus your birthday, holidays (Hari Raya, Deepavali, Merdeka...), payday, the morning weather and a heads-up before rain. |
 | ⏰ **Reminds you** | "Remind me at 3pm about the meeting": ask in chat or add one from her menu, and she tells you on time. |
@@ -67,7 +70,7 @@ Double-click **`run_deskmate.bat`**. The first time, it sets itself up (about 1�
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 174 self-tests
+run_deskmate.bat --test        # run the 186 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -202,6 +205,15 @@ Her bubble stays up until she has finished saying the line (then a moment more),
 > [!NOTE]
 > Only use voices you have the right to use. Cloning a real person's voice (like an anime character's voice actor) without their consent isn't okay, even for fun.
 
+### 🎵 Dancing, your bond, outfits and games
+
+Everything here is in **Settings › Fun** (and right-click → **Play** / **Outfit**).
+
+- **Dancing:** when a song plays in Spotify or YouTube Music, she dances: bouncing between the beats and swaying side to side. To find the beat she reads Windows' *peak meter* (the number behind the green bar in the volume mixer, 25 times a second): one loudness value, never the sound itself. A sudden jump above the recent average is a beat, and the gaps between beats give the tempo. If the meter can't be read she grooves at a steady 110 BPM. She stops when the music stops, and doesn't dance while you focus or are in a call. Right-click → **Play** → **Dance!** makes her dance for 20 seconds, music or not.
+- **Your bond** with each character grows with the things you do together: a pat (1 point, up to 10 a day), a chat message (3), a finished focus session (5), a game (3), dancing to a new song (2), and coming back on a new day (4). It never goes down. Levels: *Just met → Getting to know you → Friends → Good friends → Close friends → Best friends → Partners in crime → Inseparable*. Each level-up she celebrates (and tells you what she can wear now); from *Close friends* she sometimes says warmer things, and her chat brain knows how close you are. Your level is shown at the top of her menu (💗 Lv 4).
+- **Outfits** are drawn in code on her head, so they fit any character (on pixel-art Piko they're pixel art too): 🎀 bow (Lv 1), 🌸 flower clip (2), 🐱 cat ears (3), 🎧 headphones (4), 🎨 beret (5), 👑 little crown (6). On special days she dresses up by herself: 🥳 a party hat on your birthday, 🎅 a Santa hat at Christmas, 🧙 a witch hat on Halloween.
+- **Games:** *Rock, paper, scissors* (first to two, with answer chips), *Tic-tac-toe* in a little window (she plays well, but makes a mistake now and then, so you can win), and *Hide and seek*: she hides at the left or right edge of your screen, peeking out, and you have 30 seconds to click her.
+
 ### 🍅 Focus, your day, special days, weather
 
 Everything here is in **Settings › My day**.
@@ -332,6 +344,12 @@ deskmate/
 ├── days.py             birthdays, holidays, payday, Fridays (pure Python)
 ├── weather.py          today's weather from Open-Meteo (pure Python)
 ├── stuck.py            "you've been on this error a while" (pure Python)
+├── fun.py              dancing, your bond, outfits and the games (the Qt part)
+├── dance.py            finding the beat, and her dance moves (pure Python)
+├── audiometer.py       how loud the PC is right now (Windows' peak meter, through ctypes)
+├── bond.py             your bond level with each character (pure Python)
+├── outfits.py          her accessories, drawn in code
+├── games.py            rock paper scissors and tic-tac-toe rules (pure Python)
 ├── menu_style.py       her glass right-click menu (icons and switches drawn in code)
 ├── glass.py            the glass-window look shared by Settings, Setup and What's new
 ├── settings_window.py  the Settings window (tabs; changes apply right away)
@@ -354,7 +372,7 @@ tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
 deskmate_voice/              the voice pack's little server (Kokoro), built into DeskMate-Voice.exe
-tests/                       174 tests (python -m unittest)
+tests/                       186 tests (python -m unittest)
 packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno Setup) + voicepack.spec
 .github/workflows/           tests on every push; a tagged push builds and publishes a release
 ```
@@ -376,7 +394,7 @@ GitHub Actions runs the tests on Windows, builds `DeskMate.exe`, makes the insta
 - ✅ **Phase 5 — She notices you:** watches with you (buddy mode, hears your music, tap-to-answer), remembers you across days.
 - ✅ **Phase 6–7 — Polish & voice:** a Settings window, first-run setup, lip-sync, a built-in voice pack.
 - ✅ **Phase 8 — Through your day:** focus timer, evening wrap-up, special days, weather, stuck helper.
-- 🔜 **Phase 9 — More alive:** dances to your music, a bond level, outfits, mini-games.
+- ✅ **Phase 9 — More alive:** dances to your music, a bond level, outfits, mini-games.
 - ⏸️ **Talk to her with your voice** (on hold).
 - ⏸️ **Phase 4 — Online:** a shared pet for your team (on hold).
 

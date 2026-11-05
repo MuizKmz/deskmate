@@ -88,6 +88,10 @@ SCHEMA: dict[str, tuple[Any, Callable[[Any], bool]]] = {
     "payday": (0, lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 31),
     "weather_city": ("", lambda v: isinstance(v, str) and len(v) <= 80),  # "" = no weather
     "stuck_help": (True, _is_bool),  # buddy mode: offer help when you seem stuck on an error
+    # More alive (Phase 9)
+    "dance": (True, _is_bool),  # dances when music plays in Spotify / YouTube Music
+    "outfit": ("", lambda v: isinstance(v, str) and len(v) < 30),  # "" = none
+    "outfit_seasonal": (True, _is_bool),  # a party hat on your birthday, a Santa hat at Christmas...
 }
 
 
