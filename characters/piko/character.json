@@ -61,6 +61,39 @@
     "perch": [
       "High ground acquired!",
       "Ledge unlocked~"
+    ],
+    "focus_start": [
+      "*beep* Focus mode: ON. {minutes} minutes. I'll guard the desktop!"
+    ],
+    "focus_done": [
+      "*victory beep!* {minutes} minutes done! Break time, hero~"
+    ],
+    "focus_drift": [
+      "*suspicious beep*... {left} more, then fun stuff!"
+    ],
+    "focus_break_over": [
+      "Break over! Ready for round two? *boots up*"
+    ],
+    "focus_stopped": [
+      "Focus mode: OFF. Good run!"
+    ],
+    "stuck": [
+      "*worried beep* That bug looks tough... want me to scan it with you?"
+    ],
+    "birthday": [
+      "*party beeps* HAPPY BIRTHDAY!! Best day of the year!"
+    ],
+    "holiday": [
+      "Happy {name}! *festive beep*"
+    ],
+    "payday": [
+      "*cha-ching* It's payday!"
+    ],
+    "friday": [
+      "FRIDAY! *dramatic beep* We made it!"
+    ],
+    "wrapup": [
+      "*report beep* Your day, summarized!"
     ]
   },
   "persona": "You are a cheerful little pixel-art girl with headphones. You love games, music and cheering the user on, and you talk with lots of energy, like a friendly gamer buddy."

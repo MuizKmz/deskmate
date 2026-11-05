@@ -540,6 +540,17 @@ class ChatSession:
         _, line = parse_reply(raw)
         return line if line not in ("", "...") else None
 
+    def wrap_up(self, day: date, description: str) -> str | None:
+        """Blocking: her evening wrap-up of your day (2 short sentences), from the day's log in plain words."""
+        system = (self.persona + f"\nIt's the evening of {day:%A %d %B}. Here's what the user did on their PC today "
+                  "(from a little log you keep). Write a warm, short wrap-up for them: at most 2 sentences "
+                  "(under 220 characters), speaking to them as \"you\", noticing something specific and kind "
+                  "(their focus, a song, how long they worked), maybe a gentle nudge to rest. No lists, no numbers "
+                  "dump, no mood tag. Leave out anything private.")
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": description}]
+        _, line = parse_reply(self._complete(messages, False))
+        return line if line not in ("", "...") else None
+
     def transcript(self) -> list[dict]:
         """Today's chat for the chat log window: who, clean text, time, and any reminders she set."""
         if self.today() != self._day:

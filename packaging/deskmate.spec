@@ -11,11 +11,14 @@ from pathlib import Path
 ROOT = Path(SPECPATH).parent
 VERSION = re.search(r'__version__ = "([^"]+)"', (ROOT / "deskmate" / "__init__.py").read_text()).group(1)
 
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
 a = Analysis(
     [str(ROOT / "packaging" / "launch.py")],
     pathex=[str(ROOT)],
-    datas=[(str(ROOT / "characters"), "characters")],
-    hiddenimports=["deskmate.chatbox", "deskmate.chat"],  # imported lazily inside functions
+    # holidays: each country is its own module (found by name at run time), plus the English names.
+    datas=[(str(ROOT / "characters"), "characters")] + collect_data_files("holidays"),
+    hiddenimports=["deskmate.chatbox", "deskmate.chat"] + collect_submodules("holidays"),  # (lazy imports)
     excludes=["tkinter", "numpy", "PIL", "cv2", "rembg", "onnxruntime", "unittest", "pydoc"],
     noarchive=False,
 )

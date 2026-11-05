@@ -1292,6 +1292,179 @@ class QtSmokeTests(unittest.TestCase):
             self.assertGreater(pack.stopped, stops)
             controller.companion.close()
 
+    def test_my_day_focus_wrapup_special_days_weather_stuck(self):
+        import random
+        from datetime import datetime
+        from unittest import mock
+
+        from PySide6.QtWidgets import QPushButton
+
+        from deskmate.activity import make_activity
+        from deskmate.app import Controller
+        from deskmate.brain import Brain
+        from deskmate.character import load_pack
+        from deskmate.companion import load_frames
+        from deskmate.settings import Settings
+        from deskmate.stuck import StuckWatch
+        from deskmate.weather import Weather
+
+        def chip(chips, text):
+            for button in chips.findChildren(QPushButton):
+                if button.text() == text:
+                    return button
+            self.fail(f"no {text!r} chip in {[b.text() for b in chips.findChildren(QPushButton)]}")
+
+        def wait(condition, seconds=5):
+            deadline = time.monotonic() + seconds
+            while not condition() and time.monotonic() < deadline:
+                spin(0.05)
+
+        evening = lambda: datetime(2026, 11, 4, 21, 30)  # a Wednesday evening
+        with tempfile.TemporaryDirectory() as home, mock.patch("deskmate.app.data_dir", return_value=Path(home)), \
+                mock.patch("deskmate.dayhelper.data_dir", return_value=Path(home)):
+            settings = Settings(Path(home) / "settings.json")
+            settings["perch"] = False  # never sit on the test machine's real windows
+            settings["update_check"] = False  # no real GitHub calls in tests
+            settings["birthday"] = "11-04"
+            settings["weather_city"] = "Johor Bahru"
+            settings["country"] = ""
+            pack = load_pack(self.root)
+            brain = Brain(pack.lines, now=time.monotonic(), rng=random.Random(5), wallclock=evening)
+            controller = Controller(self.app, settings, pack, load_frames(pack), brain, ActiveUser())
+            controller._read_activity = lambda: None
+            controller._read_music = lambda: None
+            controller.start()
+            day = controller.day
+            day._started -= 100  # her hello is over
+            day.read_weather = lambda city: Weather(city, 27, 2, 32, 24, 80, rain_hour=22)
+
+            def quiet():  # she isn't in the middle of a line
+                brain._speech_until = 0
+                controller.bubble.dismiss()
+
+            # A special day: your birthday (once a day).
+            quiet()
+            day.tick(time.monotonic())
+            self.assertIn("birthday", controller.bubble.text)
+            self.assertEqual(day.log.flag(evening().date(), "special"), "your birthday")
+            quiet()
+            day.tick(time.monotonic())
+            self.assertFalse(controller.bubble.isVisible())  # once is enough
+
+            # The weather: it's evening, so no "today's weather", but a heads-up: rain at 10 pm.
+            wait(lambda: day.weather is not None)
+            quiet()
+            day.tick(time.monotonic())  # (no morning line in the evening; noted for My day)
+            self.assertEqual(day.log.flag(evening().date(), "weather"), "⛅ 27° partly cloudy")
+            quiet()
+            day.tick(time.monotonic())
+            self.assertIn("rain around 10 pm", controller.bubble.text)
+
+            # The day's log, from what you're on.
+            controller._read_activity = lambda: make_activity("code.exe", "app.py - deskmate - Visual Studio Code")
+            controller._read_music = lambda: make_activity("spotify.exe", "YOASOBI - Idol") and __import__(
+                "deskmate.activity", fromlist=["music_from"]).music_from(make_activity("spotify.exe", "YOASOBI - Idol"))
+            day._polled = time.monotonic() - 20
+            day.tick(time.monotonic())
+            summary = day.log.summary(evening().date())
+            self.assertEqual(summary["songs"], ["YOASOBI - Idol"])
+            self.assertGreater(day.log.days[evening().date().isoformat()]["apps"]["VS Code"], 10)
+
+            # The evening wrap-up: only after a real day at the PC.
+            quiet()
+            day.tick(time.monotonic())
+            self.assertFalse(day.log.flag(evening().date(), "wrapup"))
+            self.assertFalse(controller.bubble.isVisible())
+            day.log.add_time(evening().date(), "VS Code", 3 * 3600)
+            quiet()
+            day.tick(time.monotonic())
+            self.assertTrue(day.log.flag(evening().date(), "wrapup"))
+            self.assertTrue(day.chips.isVisible())
+            chip(day.chips, "Show me").click()
+            self.assertTrue(day.window.isVisible())
+            self.assertEqual(day.window.title.text(), "Your day")
+            day.window.close()
+
+            # Focus: she keeps quiet, a pill counts down, a nudge if you drift off, a cheer at the end.
+            quiet()
+            controller.menu.aboutToShow.emit()
+            self.assertFalse(controller.act_focus_stop.isVisible())
+            controller.act_focus[0].trigger()  # Focus 25 minutes
+            self.assertTrue(day.focusing)
+            self.assertTrue(brain.focusing(time.monotonic()))
+            self.assertIn("25 minutes", controller.bubble.text)
+            day.tick(time.monotonic())
+            self.assertTrue(day.pill.isVisible())
+            self.assertEqual(day.pill.text, "🍅 25:00")
+            controller.menu.aboutToShow.emit()
+            self.assertTrue(controller.act_focus_stop.isVisible())
+            self.assertIn("left", controller.act_focus_stop.text())
+            self.assertIn("focusing", controller.menu_header.status.text())
+            controller._read_activity = lambda: make_activity("chrome.exe", "cats - YouTube - Google Chrome")
+            quiet()
+            day._polled = -1e9
+            day.tick(time.monotonic())  # (just started drifting)
+            day.focus._drift_since -= 120
+            day._polled = -1e9
+            quiet()
+            day.tick(time.monotonic())
+            self.assertIn("min", controller.bubble.text)  # "...Just 25 min more"
+            self.assertEqual(day.focus.nudges, 1)
+            day.focus.phase_end = time.monotonic() - 1  # time's up
+            quiet()
+            day.tick(time.monotonic())
+            self.assertIn("25", controller.bubble.text)
+            self.assertFalse(brain.focusing(time.monotonic()))
+            self.assertTrue(day.pill.text.startswith("☕"))
+            self.assertEqual(day.log.summary(evening().date())["focus_sessions"], 1)
+            chip(day.chips, "I'm done").click()
+            self.assertIsNone(day.focus)
+            self.assertFalse(day.pill.isVisible())
+            day.start_focus(50)
+            day.pill.clicked.emit()  # a click on the pill stops it
+            self.assertIsNone(day.focus)
+            self.assertEqual(day.log.summary(evening().date())["focus_sessions"], 1)  # (stopped: not "finished")
+
+            # Stuck helper (buddy mode): fighting an error for a while -> she offers to look.
+            controller._read_activity = lambda: make_activity("windowsterminal.exe", "npm ERR! build failed - Terminal")
+            controller.watch = object()  # (pretend buddy mode is on)
+            day.stuck = StuckWatch(stuck_minutes=0)
+            for _ in range(2):
+                day._polled = -1e9
+                quiet()
+                day.tick(time.monotonic())
+            controller.watch = None
+            self.assertIn("take a look", controller.bubble.text)
+            with mock.patch.object(controller, "_on_chat_sent") as sent, mock.patch.object(controller, "open_chat_log"):
+                chip(day.chips, "Yes, take a look").click()
+            self.assertIn("stuck", sent.call_args.args[0])
+
+            # Settings › My day.
+            controller.open_settings("day")
+            window = controller._settings_window
+            window.birthday.setText("31 Dec")
+            window.birthday.editingFinished.emit()
+            self.assertEqual(settings["birthday"], "12-31")
+            window.birthday.setText("nope")
+            window.birthday.editingFinished.emit()
+            self.assertEqual(settings["birthday"], "12-31")  # not a date: kept the old one
+            window.focus_length.setCurrentIndex(window.focus_length.findData(50))
+            window.focus_length.activated.emit(window.focus_length.currentIndex())
+            self.assertEqual(settings["focus_minutes"], 50)
+            window.city.setText("Kuala Lumpur")
+            window.city.editingFinished.emit()
+            self.assertEqual(settings["weather_city"], "Kuala Lumpur")
+            wait(lambda: "°" in window.weather_info.text())
+            self.assertIn("27°", window.weather_info.text())
+            window.focus_button.click()
+            self.assertTrue(day.focusing)
+            self.assertIn("Stop", window.focus_button.text())
+            window.close()
+
+            controller._on_about_to_quit()
+            self.assertTrue((Path(home) / "daylog.json").is_file())
+            controller.companion.close()
+
     def test_settings_window_setup_and_whats_new(self):
         import random
         from unittest import mock
@@ -1339,7 +1512,7 @@ class QtSmokeTests(unittest.TestCase):
             self.assertTrue(window.isVisible())
             self.assertFalse(news.isVisible())
             tabs = [window.tabs.item(i).text() for i in range(window.tabs.count())]
-            self.assertEqual(tabs, ["General", "Chat", "Voice", "Buddy", "Memory", "About"])
+            self.assertEqual(tabs, ["General", "Chat", "Voice", "Buddy", "My day", "Memory", "About"])
             gravity = window._switches["gravity"]
             self.assertEqual(gravity.isChecked(), settings["gravity"])
             gravity.click()
@@ -1355,7 +1528,7 @@ class QtSmokeTests(unittest.TestCase):
             window.refresh()
             self.assertIn("1 thing about you", window.memory_info.text())
             window.show_tab("about")
-            self.assertEqual(window.pages.currentIndex(), 5)
+            self.assertEqual(window.pages.currentIndex(), 6)
             window.close()
 
             # Setup: choose a voice, try buddy mode (you can say no), finish.

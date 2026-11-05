@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 
 PACK_TAG = "voicepack-v1"
 PACK_URL = f"https://github.com/{REPO}/releases/download/{PACK_TAG}/DeskMate-Voice-win64.zip"
-PACK_MB = 170  # roughly, for the "Download (~170 MB)" button
+PACK_MB = 130  # roughly, for the "Download (~130 MB)" button (the real zip is 128 MB)
 EXE = "DeskMate-Voice.exe"
 MODEL_FILES = ("kokoro-v1.0.int8.onnx", "voices-v1.0.bin")
 START_TIMEOUT = 60.0  # the first start loads the model (a few seconds; slower PCs, a bit more)

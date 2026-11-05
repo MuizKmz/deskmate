@@ -111,6 +111,12 @@ def _path(name: str) -> QPainterPath:
         p.cubicTo(18.7, 3.8, 21, 5.5, 21, 8.5); p.cubicTo(21, 11.5, 19, 15, 12, 20)
     elif name == "clock":
         p.addEllipse(QRectF(3.5, 3.5, 17, 17)); p.moveTo(12, 7.5); p.lineTo(12, 12); p.lineTo(15.5, 14)
+    elif name == "timer":  # a stopwatch: focus
+        p.addEllipse(QRectF(4.5, 6, 15, 15)); p.moveTo(10, 2.8); p.lineTo(14, 2.8); p.moveTo(12, 2.8)
+        p.lineTo(12, 6); p.moveTo(12, 13.5); p.lineTo(14.8, 10.7); p.moveTo(18.2, 6.6); p.lineTo(19.6, 5.2)
+    elif name == "chart":  # bars: my day
+        p.moveTo(4, 20); p.lineTo(20, 20); p.addRoundedRect(QRectF(5.5, 12, 3, 6), 1, 1)
+        p.addRoundedRect(QRectF(10.5, 7, 3, 11), 1, 1); p.addRoundedRect(QRectF(15.5, 10, 3, 8), 1, 1)
     return p
 
 

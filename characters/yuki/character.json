@@ -122,6 +122,49 @@
       "Ooh, nice view from up here~",
       "I'll sit here for a bit, okay?",
       "Hehe, I'm taller than you now."
+    ],
+    "focus_start": [
+      "Okay~ {minutes} minutes. I'll be super quiet... you can do it!",
+      "Focus time! {minutes} minutes. I'll just sit here and cheer you on, quietly~"
+    ],
+    "focus_done": [
+      "Done~! {minutes} whole minutes. I'm proud of you. Stretch a little, okay?",
+      "Yay, {minutes} minutes! Rest your eyes for a bit~ Jangan lupa minum air."
+    ],
+    "focus_drift": [
+      "Mmh... weren't we focusing? Just {left} more, then you can watch~",
+      "Hey~ I saw that. {left} more, okay? I believe in you."
+    ],
+    "focus_break_over": [
+      "Break's over~ One more round? I'll stay quiet again.",
+      "Feeling better? Want to do another round together?"
+    ],
+    "focus_stopped": [
+      "Okay, we'll stop here~ Good effort today.",
+      "Mm, that's enough for now. You did well~"
+    ],
+    "stuck": [
+      "You've been on this one a while... want me to take a look?",
+      "Mmh, this error's being mean to you? Want me to look at it with you?"
+    ],
+    "birthday": [
+      "Happy birthday~!! I'm really happy I get to spend today with you.",
+      "It's your birthday! Ehehe~ I hope today is extra gentle with you."
+    ],
+    "holiday": [
+      "Happy {name}~!",
+      "Selamat {name}~ Hope you get to rest a little today!"
+    ],
+    "payday": [
+      "It's payday~ Treat yourself to something nice? Maybe bubble tea..."
+    ],
+    "friday": [
+      "It's Friday~ Almost the weekend. Let's finish strong!",
+      "Friday~! Just a little more, then rest."
+    ],
+    "wrapup": [
+      "Here's your day~ You did a lot, you know.",
+      "Let me tell you about your day~"
     ]
   },
   "head": {

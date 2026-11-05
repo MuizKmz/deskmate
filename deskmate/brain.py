@@ -107,6 +107,7 @@ class Brain:
         self._last_bedtime = -1e9
         self._speech_until = -1e9
         self._chatting_until = -1e9  # quiet time while you're chatting with her
+        self.focus_until = -1e9  # a focus session: no chit-chat, walks or care reminders until then
         self._speech: list[Speech] = []
         self._animations: list[str] = []
 
@@ -139,6 +140,9 @@ class Brain:
 
     def _speaking(self, now: float) -> bool:
         return now < self._speech_until
+
+    def focusing(self, now: float) -> bool:
+        return now < self.focus_until
 
     def _say_text(self, text: str, now: float, expression: str, duration: float | None = None) -> None:
         duration = duration or speech_duration(text)
@@ -399,9 +403,10 @@ class Brain:
 
         user_active = idle is None or idle < 60
 
-        # Busy all this time and never said hi? Pout.
+        # Busy all this time and never said hi? Pout. (Not while you focus: that's what she asked for.)
         if (
             self.base == "idle"
+            and not self.focusing(now)
             and user_active
             and not self._ignored_said
             and not self._dragging
@@ -427,7 +432,7 @@ class Brain:
         awake = self.base != "sleep"
 
         # Care reminders.
-        chatting = now < self._chatting_until
+        chatting = now < self._chatting_until or self.focusing(now)  # (focusing: she keeps quiet too)
         if self.reminders and awake and user_active and not chatting and not self._speaking(now):
             if now - self._last_water >= WATER_EVERY:
                 self._last_water = now

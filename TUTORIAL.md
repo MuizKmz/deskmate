@@ -27,7 +27,7 @@
 | 6 | [Never break, never get lost](#6---never-break-never-get-lost) | `settings.py`, `app.py` | Atomic saves, screen clamping, logging, one instance |
 | 7 | [Character packs](#7---character-packs) | `character.py`, `tools/` | Validating input, and how the image clean-up works |
 | 8 | [Bringing her to life](#8---bringing-her-to-life) | `companion.py`, `brain.py` | Blinking, gravity, throwing, wandering, frame-rate-proof physics |
-| 9 | [Talking with AI](#9---talking-with-ai) | `chat.py`, `chatbox.py`, `activity.py`, `look.py` | OpenAI, Claude and Ollama, threads, prompts, buddy mode, testing with a fake server |
+| 9 | [Talking with AI](#9---talking-with-ai) | `chat.py`, `chatbox.py`, `activity.py`, `look.py`, `dayhelper.py` | OpenAI, Claude and Ollama, threads, prompts, buddy mode, your day, testing with a fake server |
 | 10 | [Shipping it](#10---shipping-it) | `packaging/`, `.github/workflows/` | PyInstaller, an installer, and CI/CD with GitHub Actions |
 | 11 | [Your turn](#11---your-turn) | | Challenges with hints |
 
@@ -554,6 +554,32 @@ Two small rules keep it simple:
 
 The **first-run setup** (`welcome.SetupWizard`) is the same idea in four steps (chat brain, voice, buddy mode, done), and **What's new** is shown once per version: `seen_version` in the settings remembers the last version you saw.
 
+### Through your day: small pure rules, one Qt helper
+
+Phase 8 added five helpers: a focus timer, an evening wrap-up, special days, the weather, and a stuck helper. Each could have been fifty lines inside `app.py` (already the biggest file). Instead they follow the same split as the brain:
+
+| File | What it decides | Qt? |
+|---|---|---|
+| `focus.py` | how long is left, when the break starts and ends, "are you drifting off?" | no |
+| `daylog.py` | what goes in the day's log, and the day as numbers or plain words | no |
+| `days.py` | is today special? (birthday, holiday, payday, Friday) | no |
+| `weather.py` | ask Open-Meteo, turn the answer into a sentence | no |
+| `stuck.py` | does this window look like a fight with an error? | no |
+| `dayhelper.py` | when to *say* those things, the 🍅 pill, the "Your day" window | yes |
+
+The pure files take `now` and an `Activity` and return a decision, so the tests are plain: a focus session is created at `started=0.0` and asked what happens at `25 * 60`. The test for "a nudge after a minute, not more often than every five" is a dozen `observe()` calls with made-up times; no clock, no window, no waiting.
+
+`DayHelper.tick()` is called with her other ticks and runs each part separately, each in its own `try`, so a bug in the weather can never stop the focus timer (or her). Everything she says goes through one gate, `_free()`: she's visible, awake, not already talking, you're not chatting with her and not in a call. That's what keeps five chatty features from talking over each other: one line at a time, and the next one waits for the next tick.
+
+A few details worth stealing:
+
+- **Quiet means quiet.** While you focus, the brain's `focus_until` blocks chit-chat, walks, water nudges and pouting, and buddy mode holds its comments. Only your own reminders get through.
+- **"Distracting" is a whole word.** A plain "is it in the title?" check would think a search for *"why is my eye twitching"* is Twitch. So the site list is a regular expression with `\b` word boundaries. Music players are never distracting: plenty of people focus with music.
+- **Log names, not titles.** The day's log keeps *"YouTube, 40 min"*, never the video's title. `label_for()` takes the site from the end of the browser title only when it looks like a name (short, no numbers or slashes), and private windows give `None`.
+- **"Once a day" lives on disk.** Each day in `daylog.json` keeps flags (`special`, `weather`, `rain`, `wrapup`), so restarting DeskMate doesn't make her wish you happy birthday twice.
+- **Holidays without a state.** In the `holidays` package, Deepavali isn't a *national* holiday in Malaysia (one state doesn't have it), so with no state set it would be missed. When there's no state, a holiday that more than half of the states have counts too. And "observed"/"in lieu" days off are skipped: the day off isn't the festival.
+- **The weather answers everyone.** Settings' *Check now* and her morning line may ask at the same time; the second asker is added to a waiting list and gets the same answer, instead of a second request.
+
 ---
 
 ## 10 · 📦 Shipping it
@@ -563,7 +589,7 @@ Running from source needs Python. Real users want a download that just works. Th
 ```mermaid
 flowchart LR
     T["git push origin v0.3.0"] --> GA[GitHub Actions<br/>Windows machine]
-    GA --> TS[Run the 159 tests]
+    GA --> TS[Run the 174 tests]
     TS --> PI["PyInstaller<br/>DeskMate.exe + _internal"]
     PI --> CK["DeskMate.exe --check"]
     CK --> IS[Inno Setup<br/>installer]

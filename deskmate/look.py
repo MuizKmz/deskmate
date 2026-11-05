@@ -249,8 +249,9 @@ class QuickReplies(QWidget):
     def answers(self) -> list[str]:
         return [b.text() for b in self.findChildren(QPushButton) if b.property("answer")]
 
-    def offer(self, answers: list[str], bubble: QRect, available: QRect) -> None:
-        """Show ``answers`` as chips just above her bubble (or below it, if there's no room)."""
+    def offer(self, answers: list[str], bubble: QRect, available: QRect, chat: bool = True) -> None:
+        """Show ``answers`` as chips just above her bubble (or below it, if there's no room).
+        ``chat``: also a 💬 chip, to type your own answer."""
         while self._row.count():
             widget = self._row.takeAt(0).widget()
             if widget is not None:
@@ -259,7 +260,8 @@ class QuickReplies(QWidget):
                 discard(widget)
         for answer in answers:
             self._row.addWidget(self._chip(answer, answer=True))
-        self._row.addWidget(self._chip("💬", answer=False))
+        if chat:
+            self._row.addWidget(self._chip("💬", answer=False))
         self.adjustSize()
         x = bubble.center().x() - self.width() // 2
         y = bubble.top() - self.height() - 2

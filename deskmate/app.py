@@ -22,6 +22,8 @@ from .character import available_packs, find_pack, format_report, load_pack
 from .logsetup import setup_logging
 from .paths import character_dirs, characters_dir, data_dir
 
+FOCUS_LENGTHS = (25, 50)  # minutes, in her Focus menu
+
 log = logging.getLogger("deskmate")
 
 
@@ -55,6 +57,14 @@ def _check(target: str) -> int:
         print(format_report(pack))
         print()
         worst = max(worst, 0 if pack.ok else 1)
+    if not target:  # the whole app: are her special days there too? (the built .exe must include them)
+        from datetime import date
+
+        from .days import special_day
+
+        merdeka = special_day(date(2026, 8, 31), country="MY")
+        print(f"Holidays: {'OK (' + merdeka.name + ')' if merdeka and merdeka.kind == 'holiday' else 'MISSING'}")
+        worst = max(worst, 0 if merdeka and merdeka.kind == "holiday" else 1)
     return worst
 
 
@@ -230,6 +240,9 @@ class Controller:
         self._whats_new = None
         self._diary_busy = False
         self.speaker = self._make_speaker()
+        from .dayhelper import DayHelper
+
+        self.day = DayHelper(self)  # focus timer, wrap-up, special days, weather, stuck helper
         self._update = None  # a newer release, if GitHub has one
         self._update_worker = None
 
@@ -319,6 +332,7 @@ class Controller:
                 self._watch_tick(now)
             except Exception:  # buddy mode must never break her
                 log.exception("Watching failed")
+        self.day.tick(now)
         self._apply(now)
 
     def _apply(self, now: float) -> None:
@@ -439,6 +453,7 @@ class Controller:
             watch.music.hold(now)
             watch.replies.hide()
         self.brain.on_chat_sent(now)
+        self.day.note_chat()
         self._apply(now)
         self.bubble.say("...", 60, self.companion.head_rect_global(), self.companion.available_rect())
         self._set_chat_waiting(True)
@@ -791,7 +806,7 @@ class Controller:
                                                  "happy"))
 
     def _our_windows(self) -> list:
-        windows = [self.companion, self.bubble, self._chat_box, self._chat_log]
+        windows = [self.companion, self.bubble, self._chat_box, self._chat_log] + self.day.windows()
         if self.watch is not None:
             windows += [self.watch.badge, self.watch.replies]
         return [w for w in windows if w is not None]
@@ -844,7 +859,7 @@ class Controller:
         self._notice_habit("app", activity, now)
         self._notice_habit("music", playing, now)
         busy = (watch.reacting or (self._chat_worker is not None and self._chat_worker.busy)
-                or now < getattr(self.brain, "_chatting_until", 0))
+                or now < getattr(self.brain, "_chatting_until", 0) or self.day.focusing)
         if busy or not visible or self.brain.asleep or self.idle.seconds() > self.AWAY_SECONDS:
             return
         if target is not None:
@@ -1120,6 +1135,11 @@ class Controller:
         self.act_memory = action("What I remember about you", self.open_memory, "heart")
         self.act_talk = action("Talk to me", lambda: self._event(self.brain.on_talk_request), "sparkle")
         self.act_walk = action("Take a walk", self.take_walk, "walk")
+        self.focus_menu = submenu(menu, "Focus", "timer")
+        self.act_focus = [action(f"Focus {m} minutes", functools.partial(self._start_focus, m), parent=self.focus_menu)
+                          for m in FOCUS_LENGTHS]
+        self.act_focus_stop = action("Stop focusing", lambda: self.day.stop_focus(), parent=self.focus_menu)
+        self.act_day = action("My day", lambda: self.day.open_day(), "chart")
         self.act_sleep = action("Go to sleep", self._toggle_sleep, "moon")
         self.reminders_menu = submenu(menu, "Reminders", "bell")
         self._fill_reminders_menu()
@@ -1227,9 +1247,16 @@ class Controller:
         self.act_chat.setText(f"Chat with {self.pack.name}...")
         self.act_look.setText("Stop watching my screen" if self.watch else "Watch with me...")
         self.act_sleep.setText("Wake up" if self.brain.asleep else "Go to sleep")
+        focus = self.day.focus
+        self.act_focus_stop.setVisible(focus is not None)
+        if focus is not None:
+            left = focus.clock(time.monotonic())
+            self.act_focus_stop.setText(f"Stop focusing ({left} left)" if focus.focusing else f"End the break ({left})")
         self.act_sleep.setIcon(icon("sun" if self.brain.asleep else "moon", ink))
         count = len(self.reminders.upcoming())
         status = self.brain.label(time.monotonic()) if visible else "hiding"
+        if self.day.focusing:
+            status = "focusing with you"
         if count:
             status += f"  ·  {count} reminder{'s' if count > 1 else ''}"
         self.menu_header.set_text(self.pack.name, status)
@@ -1242,6 +1269,9 @@ class Controller:
 
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
             self.toggle_visible()
+
+    def _start_focus(self, minutes: int, _checked: bool = False) -> None:
+        self.day.start_focus(minutes)
 
     def _toggle_sleep(self) -> None:
         now = time.monotonic()
@@ -1554,6 +1584,10 @@ class Controller:
         self.settings.save()
         self.bubble.dismiss()
         self.stop_watching("quit")
+        try:
+            self.day.shutdown()  # (writes the day's log)
+        except Exception:
+            log.exception("Couldn't save the day's log")
         for window in (self._chat_box, self._chat_log, self._memory_window, getattr(self, "_settings_window", None),
                        getattr(self, "_setup", None), getattr(self, "_whats_new", None)):
             if window is not None:

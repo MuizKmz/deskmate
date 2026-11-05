@@ -25,9 +25,9 @@ if not defined PY goto :no_python
 if errorlevel 1 goto :no_python
 
 :check_packages
-"%VPY%" -c "import PySide6" >nul 2>nul
+"%VPY%" -c "import PySide6, holidays" >nul 2>nul
 if not errorlevel 1 goto :run
-echo [DeskMate] Installing PySide6 (one time only)...
+echo [DeskMate] Installing what she needs (one time only, or after an update)...
 "%VPY%" -m pip install --disable-pip-version-check -q -r requirements.txt
 if errorlevel 1 goto :pip_failed
 

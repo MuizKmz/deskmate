@@ -1,2 +1,3 @@
 # Everything DeskMate needs to run. (PySide6-Essentials is the smaller Qt package.)
 PySide6-Essentials>=6.6,<7
+holidays>=0.60  # her special days: Hari Raya, Chinese New Year, Deepavali... (pure Python)

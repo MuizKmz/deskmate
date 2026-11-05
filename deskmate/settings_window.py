@@ -12,7 +12,7 @@ from datetime import date
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QScrollArea,
+    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QScrollArea,
     QStackedWidget, QVBoxLayout, QWidget,
 )
 
@@ -23,7 +23,11 @@ from .menu_style import icon as _icon
 
 REPO_URL = "https://github.com/MuizKmz/deskmate"
 TABS = [("general", "General", "settings"), ("chat", "Chat", "chat"), ("voice", "Voice", "sparkle"),
-        ("buddy", "Buddy", "eye"), ("memory", "Memory", "heart"), ("about", "About", "sun")]
+        ("buddy", "Buddy", "eye"), ("day", "My day", "chart"), ("memory", "Memory", "heart"),
+        ("about", "About", "sun")]
+COUNTRIES = [("auto", "Automatic (from Windows)"), ("MY", "Malaysia"), ("SG", "Singapore"), ("ID", "Indonesia"),
+             ("BN", "Brunei"), ("TH", "Thailand"), ("PH", "Philippines"), ("JP", "Japan"), ("KR", "South Korea"),
+             ("AU", "Australia"), ("GB", "United Kingdom"), ("US", "United States"), ("", "None")]
 
 
 class SettingsWindow(GlassWindow):
@@ -144,6 +148,21 @@ class SettingsWindow(GlassWindow):
         row.addStretch(1)
         column.addLayout(row)
 
+    def _field(self, placeholder: str, slot, width: int = 170) -> QLineEdit:
+        """A small text box; ``slot(text)`` when you press Enter or leave it."""
+        edit = QLineEdit()
+        edit.setPlaceholderText(placeholder)
+        edit.setFixedWidth(width)
+        edit.setStyleSheet(f"QLineEdit {{ color: {INK.name()}; background: rgba(255,255,255,0.06);"
+                           f" border: 1px solid {css(self.accent, 0.5)}; border-radius: 10px; padding: 4px 10px; }}")
+        edit.editingFinished.connect(lambda: slot(edit.text()))
+        return edit
+
+    def _heading(self, column: QVBoxLayout, text: str) -> None:
+        label = QLabel(text)
+        label.setStyleSheet(label_style(10, 0.85, bold=True) + " margin-top: 10px;")
+        column.addWidget(label)
+
     def _info(self, column: QVBoxLayout) -> QLabel:
         label = QLabel("")
         label.setWordWrap(True)
@@ -213,6 +232,66 @@ class SettingsWindow(GlassWindow):
         self._buttons(column, self.watch_button)
         self._switch(column, "watch_badge", "Show the 👁 sign while she watches", "A small sign by her head.",
                      lambda on: c._set("watch_badge", bool(on)))
+        self._switch(column, "stuck_help", "Offer help when I'm stuck",
+                     "If you've been fighting an error for a while, she offers to take a look.",
+                     lambda on: c._set("stuck_help", bool(on)))
+        column.addStretch(1)
+        return page
+
+    def _page_day(self) -> QWidget:
+        from .weather import CREDIT
+
+        c, name = self.c, self.c.pack.name
+        page, column = self._page("My day")
+
+        self._heading(column, "🍅 Focus timer")
+        self.focus_length = self._combo([(m, f"{m} minutes") for m in (15, 25, 30, 45, 50, 60, 90)],
+                                        lambda m: c._set("focus_minutes", int(m)))
+        self._row(column, "Focus length", f"Right-click {name} › Focus. She keeps quiet while you work.",
+                  self.focus_length)
+        self._switch(column, "focus_nudge", "Nudge me if I drift off",
+                     "A gentle word if you wander to YouTube or games while focusing.",
+                     lambda on: c._set("focus_nudge", bool(on)))
+        self.focus_button = self._button("Start focusing", self._toggle_focus, strong=True)
+        self._buttons(column, self.focus_button)
+
+        self._heading(column, "🌙 Evening wrap-up")
+        self._switch(column, "day_log", "Keep a little log of my day",
+                     "App names and minutes, songs, focus. Only on this PC, never window titles.", self._set_day_log)
+        self._switch(column, "wrapup", "Evening wrap-up", f"{name} tells you about your day.",
+                     lambda on: c._set("wrapup", bool(on)))
+        self.wrapup_hour = self._combo([(h, f"from {h % 12 or 12} {'pm' if h >= 12 else 'am'}") for h in
+                                        range(17, 24)], lambda h: c._set("wrapup_hour", int(h)))
+        self._row(column, "When", "Once a day, after this time.", self.wrapup_hour)
+        self._buttons(column, self._button("My day", c.day.open_day), self._button("Clear the log", self._clear_log))
+
+        self._heading(column, "🎉 Special days")
+        self._switch(column, "special_days", "Special days", "Your birthday, holidays, payday, Fridays.",
+                     lambda on: c._set("special_days", bool(on)))
+        self.birthday = self._field("e.g. 31 Dec", self._set_birthday)
+        self._row(column, "Your birthday", "Day and month.", self.birthday)
+        from .dayhelper import system_country
+
+        here = system_country()
+        names = dict(COUNTRIES)
+        countries = [("auto", f"Automatic ({names.get(here, here or 'unknown')})")] + COUNTRIES[1:]
+        self.country = self._combo(countries, lambda v: c._set("country", v))
+        self._row(column, "Holidays from", "Hari Raya, Chinese New Year, Deepavali, Merdeka...", self.country)
+        self.region = self._field("e.g. JHR", lambda t: c._set("region", t.strip().upper()[:10]), 130)
+        self._row(column, "State", "For state holidays (JHR, SGR, KUL, PNG...).", self.region)
+        self.payday = self._combo([(0, "Don't mention")] + [(d, f"Day {d}") for d in range(1, 31)] +
+                                  [(31, "Last day of the month")], lambda d: c._set("payday", int(d)))
+        self._row(column, "Payday", "", self.payday)
+
+        self._heading(column, "🌤 Weather")
+        self.city = self._field("e.g. Johor Bahru", self._set_city)
+        self._row(column, "Your city", "Morning weather, and a heads-up before rain.", self.city)
+        self.weather_info = self._info(column)
+        self._buttons(column, self._button("Check now", self._check_weather))
+        credit = QLabel(f'<a href="https://open-meteo.com/" style="color: {self.accent.name()};">{CREDIT}</a>')
+        credit.setOpenExternalLinks(True)
+        credit.setStyleSheet(label_style(8, 0.6))
+        column.addWidget(credit)
         column.addStretch(1)
         return page
 
@@ -257,6 +336,62 @@ class SettingsWindow(GlassWindow):
         self.c._set_voice(mode)
         self.refresh()
 
+    def _toggle_focus(self) -> None:
+        if self.c.day.focus is not None:
+            self.c.day.stop_focus()
+        else:
+            self.c.day.start_focus()
+        self.refresh()
+
+    def _set_day_log(self, on: bool) -> None:
+        self.c._set("day_log", bool(on))
+
+    def _clear_log(self) -> None:
+        self.c.day.clear_log()
+        self.weather_info.setText("Cleared: today's log starts fresh.")
+
+    def _set_birthday(self, text: str) -> None:
+        from .days import valid_birthday
+
+        value = valid_birthday(text)
+        if value is None:
+            self.birthday.setToolTip("Hmm, that's not a date. Try 31 Dec or 31/12.")
+            self.birthday.setProperty("bad", True)
+            self.birthday.setStyleSheet(self.birthday.styleSheet() + " QLineEdit { border: 1px solid #E06C75; }")
+            return
+        if self.birthday.property("bad"):
+            self.birthday.setProperty("bad", False)
+            self.birthday.setStyleSheet(self.birthday.styleSheet().replace(" QLineEdit { border: 1px solid #E06C75; }", ""))
+        self.birthday.setToolTip("")
+        self.c._set("birthday", value)
+        self.refresh()
+
+    def _set_city(self, text: str) -> None:
+        city = text.strip()[:80]
+        if city != self.c.settings["weather_city"]:
+            self.c._set("weather_city", city)
+            self.c.day.city_changed()
+            if city:
+                self._check_weather()
+            else:
+                self.weather_info.setText("No weather (no city).")
+
+    def _check_weather(self) -> None:
+        city = self.c.settings["weather_city"]
+        if not city:
+            self.weather_info.setText("Type your city first.")
+            return
+        self.weather_info.setText(f"Looking at the sky over {city}...")
+
+        def done(ok: bool, value) -> None:
+            try:
+                self.weather_info.setText(f"{value.emoji} {value.line()}" if ok else str(value))
+            except RuntimeError:
+                pass  # (the window was closed meanwhile)
+
+        self.c.day.city_changed()
+        self.c.day.fetch_weather(city, done)
+
     def _toggle_watching(self) -> None:
         self.c.toggle_watching()
         self.refresh()
@@ -267,16 +402,34 @@ class SettingsWindow(GlassWindow):
         from . import autostart
 
         c, s = self.c, self.c.settings
-        values = {key: s[key] for key in ("always_on_top", "gravity", "wander", "perch", "chatty", "reminders",
-                                          "watch_badge", "remember", "update_check")}
+        values = {key: s[key] for key in self._switches if key in s}
         values["autostart"] = autostart.is_enabled() if "autostart" in self._switches else False
         for key, switch in self._switches.items():
             switch.blockSignals(True)
             switch.setChecked(bool(values.get(key)))
             switch.blockSignals(False)
             switch.update()
-        for combo, value in ((self.size, s["size"]), (self.voice, s["voice"]), (self.voice_lines, s["voice_lines"])):
+        for combo, value in ((self.size, s["size"]), (self.voice, s["voice"]), (self.voice_lines, s["voice_lines"]),
+                             (self.focus_length, s["focus_minutes"]), (self.wrapup_hour, s["wrapup_hour"]),
+                             (self.country, s["country"]), (self.payday, s["payday"])):
             combo.setCurrentIndex(max(0, combo.findData(value)))
+        if self.focus_length.findData(s["focus_minutes"]) < 0:
+            self.focus_length.addItem(f"{s['focus_minutes']} minutes", s["focus_minutes"])
+            self.focus_length.setCurrentIndex(self.focus_length.count() - 1)
+        for edit, value in ((self.birthday, _pretty_birthday(s["birthday"])), (self.region, s["region"]),
+                            (self.city, s["weather_city"])):
+            if not edit.hasFocus():
+                edit.setText(value)
+        focus = c.day.focus
+        self.focus_button.setText("Start focusing" if focus is None else
+                                  f"Stop ({focus.clock(time.monotonic())} left)" if focus.focusing else "End the break")
+        if not s["weather_city"]:
+            self.weather_info.setText("Type your city to get the weather in the morning.")
+        elif c.day.weather is None and not self.weather_info.text():
+            self.weather_info.setText("Not checked yet: press Check now.")
+        elif c.day.weather is not None:
+            w = c.day.weather
+            self.weather_info.setText(f"{w.emoji} {w.place}: {w.temperature:.0f}°, {w.words} (up to {w.high:.0f}°)")
 
         from .chat import MODEL_SETTINGS
 
@@ -313,3 +466,12 @@ class SettingsWindow(GlassWindow):
             (f"She remembers {len(memory.facts)} thing{'s' if len(memory.facts) != 1 else ''} about you, "
              f"{len(memory.days)} day{'s' if len(memory.days) != 1 else ''} in her diary, and "
              f"{habits} habit{'s' if habits != 1 else ''}.") if not memory.empty else "Nothing yet.")
+
+
+def _pretty_birthday(value: str) -> str:
+    """"12-31" -> "31 Dec"."""
+    if not value:
+        return ""
+    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    month, day = (int(n) for n in value.split("-"))
+    return f"{day} {months[month - 1]}"

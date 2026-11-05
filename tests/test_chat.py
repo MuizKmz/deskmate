@@ -88,7 +88,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(session.last_reminders, [("3pm", "the meeting")])
         self.assertIn('<remind when="3pm">', session.history[-1]["content"])  # so she knows it's set
         self.assertIn("<remind", C.persona_prompt({}, "Yuki"))  # the real prompt tells her how
-        self.fake.reply = "[talk] Nothing to remind."
+        self.fake.reply = "[talk] Nothing to remind." 
         session.ask("hi")
         self.assertEqual(session.last_reminders, [])
         self.assertEqual(C.parse_reply('[happy] ok <remind when="3pm">cut off'), ("happy", "ok cut off"))

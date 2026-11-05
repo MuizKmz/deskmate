@@ -32,6 +32,8 @@ dozes off when you leave, pouts when you ignore her, and reminds you to drink wa
 | 😴 **Lives with your day** | Gets sleepy when you step away, falls asleep, and wakes up when you come back. Sleepy late at night too. |
 | 😤 **Has feelings** | Pouts if you work for ages without saying hi. One pat and she forgives you. |
 | 💧 **Takes care of you** | Gentle reminders to drink water, stretch, and go to bed when you work past 11 pm (can be switched off). |
+| 🍅 **Focuses with you** | "Focus 25 minutes": she keeps quiet, counts down, cheers when you're done, suggests a break, and gives a gentle nudge if you drift off to YouTube. |
+| 🌙 **Wraps up your day** | In the evening she tells you about your day: hours at the PC, where the time went, focus, songs. Plus your birthday, holidays (Hari Raya, Deepavali, Merdeka...), payday, the morning weather and a heads-up before rain. |
 | ⏰ **Reminds you** | "Remind me at 3pm about the meeting": ask in chat or add one from her menu, and she tells you on time. |
 | 💬 **Talks** | Speech bubbles with a typing effect, from her own lines in `character.json`. She can also say them out loud, and her lips move in time with her voice. |
 | 🧠 **Chats with you** | Type to her and she answers in character, powered by OpenAI, Claude or a free local model (Ollama). Remembers your day. |
@@ -65,7 +67,7 @@ Double-click **`run_deskmate.bat`**. The first time, it sets itself up (about 1�
 
 ```powershell
 run_deskmate.bat --console     # same, but with a console window so you can see errors
-run_deskmate.bat --test        # run the 159 self-tests
+run_deskmate.bat --test        # run the 174 self-tests
 
 # or by hand, from this folder:
 python -m venv .venv
@@ -200,6 +202,16 @@ Her bubble stays up until she has finished saying the line (then a moment more),
 > [!NOTE]
 > Only use voices you have the right to use. Cloning a real person's voice (like an anime character's voice actor) without their consent isn't okay, even for fun.
 
+### 🍅 Focus, your day, special days, weather
+
+Everything here is in **Settings › My day**.
+
+- **Focus timer:** right-click → **Focus** → *25* or *50 minutes*. A little 🍅 pill by her head counts down, and she keeps quiet: no chit-chat, no walks, no buddy comments, no water nudges (your own reminders still come). If you wander off to YouTube, Netflix, social media or a game for more than a minute, she gives you a gentle nudge (at most every 5 minutes; music players don't count). When time's up she cheers and offers a 5-minute ☕ break, then *Another round?* Click the pill to stop.
+- **Your day:** right-click → **My day** shows how long you were on the PC, where the time went (VS Code, YouTube, GitHub...), your focus sessions, songs and chats, and a few words from her about it (kept in her diary). From 9 pm (you can change it) she offers an evening wrap-up once a day. The log keeps only *app or site names and minutes*, never window titles or private windows, only on your PC (`daylog.json`, last two weeks). Switch it off or clear it anytime.
+- **Special days:** your birthday, public holidays (Hari Raya Aidilfitri and Haji, Chinese New Year, Deepavali, Merdeka, Malaysia Day, Christmas... from the [holidays](https://github.com/vacanza/holidays) package, for Malaysia and most other countries; set your state for state holidays), payday, and Fridays. Once a day, after her hello.
+- **Weather:** type your city and she tells you the morning weather (*"It's 27° and partly cloudy in Johor Bahru today (up to 32°), and it'll probably rain later~ Bring an umbrella!"*) and gives a heads-up an hour before rain. Weather data by [Open-Meteo.com](https://open-meteo.com/) (free, no key; only your city's name is sent).
+- **Stuck helper:** in buddy mode, if you've been fighting an error for about 10 minutes (a traceback in the terminal, Stack Overflow, "how to fix..."), she asks if she should take a look. *Yes* sends a picture of the window to her chat brain and her answer opens in Today's chat.
+
 ### ⏰ Reminders
 
 Ask her in chat: *"remind me at 3pm about the meeting"*, *"remind me in 20 minutes to stretch"*. Or, without any AI, right-click → **Reminders** → **Add reminder...** and type:
@@ -314,6 +326,12 @@ deskmate/
 ├── look.py             buddy mode's windows: the permission box, the 👀 badge, screen pictures
 ├── activity.py         buddy mode's eyes: which app / tab you're on, and when a comment is due
 ├── memory.py           she remembers you: facts, a diary of your days, your habits
+├── dayhelper.py        "My day": focus timer, wrap-up, special days, weather, stuck helper (the Qt part)
+├── focus.py            the focus timer and "are you drifting off?" (pure Python)
+├── daylog.py           the day's log for the wrap-up: app names and minutes (pure Python)
+├── days.py             birthdays, holidays, payday, Fridays (pure Python)
+├── weather.py          today's weather from Open-Meteo (pure Python)
+├── stuck.py            "you've been on this error a while" (pure Python)
 ├── menu_style.py       her glass right-click menu (icons and switches drawn in code)
 ├── glass.py            the glass-window look shared by Settings, Setup and What's new
 ├── settings_window.py  the Settings window (tabs; changes apply right away)
@@ -336,7 +354,7 @@ tools/add_frames.py          adds an animation (like her walk cycle) to a pack
 tools/render_preview.py      makes the README pictures from the real windows
 tools/render_demo.py         records docs/demo.mp4 + demo.gif from the real window
 deskmate_voice/              the voice pack's little server (Kokoro), built into DeskMate-Voice.exe
-tests/                       159 tests (python -m unittest)
+tests/                       174 tests (python -m unittest)
 packaging/                   DeskMate.exe recipe (PyInstaller) + installer (Inno Setup) + voicepack.spec
 .github/workflows/           tests on every push; a tagged push builds and publishes a release
 ```
@@ -356,6 +374,9 @@ GitHub Actions runs the tests on Windows, builds `DeskMate.exe`, makes the insta
 - ✅ **Phase 3 — AI:** chat with her (OpenAI or a free local model with Ollama), she remembers your day.
 - ✅ **Phase 3½ — Extras:** sit on windows, wave / stretch / yawn, a chat log window, voice, Claude as a third chat brain, "a new version is out" notice.
 - ✅ **Phase 5 — She notices you:** watches with you (buddy mode, hears your music, tap-to-answer), remembers you across days.
+- ✅ **Phase 6–7 — Polish & voice:** a Settings window, first-run setup, lip-sync, a built-in voice pack.
+- ✅ **Phase 8 — Through your day:** focus timer, evening wrap-up, special days, weather, stuck helper.
+- 🔜 **Phase 9 — More alive:** dances to your music, a bond level, outfits, mini-games.
 - ⏸️ **Talk to her with your voice** (on hold).
 - ⏸️ **Phase 4 — Online:** a shared pet for your team (on hold).
 

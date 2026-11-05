@@ -64,6 +64,21 @@ DEFAULT_LINES: dict[str, list[str]] = {
     "reminder_missed": ["While I was off, you had a reminder: {what}"],
     "reminder_set": ["Okay! I'll remind you at {time}."],
     "bedtime": ["It's getting late... time for bed soon?"],
+    # Focus timer
+    "focus_start": ["Okay! {minutes} minutes of focus. I'll be quiet~ You can do it!"],
+    "focus_done": ["Done! {minutes} minutes of focus. Great job~ Take a little break!"],
+    "focus_drift": ["Hey~ weren't we focusing? Just {left} more!"],
+    "focus_break_over": ["Break's over~ Another round?"],
+    "focus_stopped": ["Okay, we'll stop here. Good effort~"],
+    # Stuck helper (buddy mode)
+    "stuck": ["You've been on this problem for a while... want me to take a look?"],
+    # Special days
+    "birthday": ["Happy birthday!! I'm so happy I get to spend it with you~"],
+    "holiday": ["Happy {name}!"],
+    "payday": ["It's payday~ Treat yourself a little, okay?"],
+    "friday": ["It's Friday~ Almost the weekend!"],
+    # Evening wrap-up
+    "wrapup": ["Here's your day~"],
 }
 
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")

@@ -10,6 +10,15 @@ from .glass import GlassWindow, button_style, css, label_style
 from .menu_style import INK
 
 WHATS_NEW = {
+    "0.8.0": [
+        ("🍅", "Focus timer", "Right-click her › Focus. She keeps quiet, counts down, cheers at the end, and nudges you "
+                             "if you drift off to YouTube."),
+        ("🌙", "Your day", "An evening wrap-up of your day (right-click › My day anytime). App names only, kept on "
+                          "this PC."),
+        ("🎉", "Special days", "Your birthday, Hari Raya, Deepavali, Merdeka, payday, Fridays."),
+        ("🌤", "Weather", "Set your city in Settings › My day: the morning weather, and a heads-up before rain."),
+        ("🧩", "Stuck helper", "In buddy mode, if you've been fighting an error for a while, she offers to look."),
+    ],
     "0.7.0": [
         ("🧠", "Claude as a chat brain", "Next to OpenAI and Ollama (Settings › Chat)."),
         ("👀", "Watch with me (buddy mode)", "She notices what you open, hears your music, and reacts like a friend. "

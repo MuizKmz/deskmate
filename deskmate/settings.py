@@ -75,6 +75,19 @@ SCHEMA: dict[str, tuple[Any, Callable[[Any], bool]]] = {
     "chat_model": ("", lambda v: isinstance(v, str) and len(v) < 120),
     "ollama_url": ("http://localhost:11434/v1", lambda v: isinstance(v, str) and v.startswith(("http://", "https://"))),
     "ollama_model": ("", lambda v: isinstance(v, str) and len(v) < 120),
+    # My day (Phase 8)
+    "focus_minutes": (25, lambda v: isinstance(v, int) and not isinstance(v, bool) and 5 <= v <= 180),
+    "focus_nudge": (True, _is_bool),  # a gentle word if you drift off to YouTube while focusing
+    "day_log": (True, _is_bool),  # keep a little log of the day (app names only) for the wrap-up
+    "wrapup": (True, _is_bool),
+    "wrapup_hour": (21, lambda v: isinstance(v, int) and not isinstance(v, bool) and 15 <= v <= 23),
+    "special_days": (True, _is_bool),
+    "birthday": ("", lambda v: isinstance(v, str) and (v == "" or (len(v) == 5 and v[2] == "-"))),  # "MM-DD"
+    "country": ("auto", lambda v: isinstance(v, str) and (v == "auto" or len(v) <= 3)),  # holidays: "MY", "" = none
+    "region": ("", lambda v: isinstance(v, str) and len(v) <= 10),  # state, e.g. "JHR" (state holidays)
+    "payday": (0, lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 31),
+    "weather_city": ("", lambda v: isinstance(v, str) and len(v) <= 80),  # "" = no weather
+    "stuck_help": (True, _is_bool),  # buddy mode: offer help when you seem stuck on an error
 }
 
 
@@ -114,6 +127,9 @@ class Settings:
         log.warning("Settings file was unreadable (%s); using defaults. Old file kept as %s", exc, backup)
 
     # ----------------------------------------------------------------- access
+    def __contains__(self, key: str) -> bool:
+        return key in self._data
+
     def __getitem__(self, key: str) -> Any:
         return self._data[key]
 
